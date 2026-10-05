@@ -63,6 +63,10 @@ build-backend = "hatchling.build"
 
 [tool.hatch.version]
 source = "vcs"
+# Only v<digit>* tags are releases. The default describe takes the nearest
+# tag containing a digit, so a date-stamped local tag (a pre-rewrite backup,
+# say) could become the version and break the build.
+raw-options = { scm = { git = { describe_command = "git describe --dirty --tags --long --abbrev=40 --match v[0-9]*" } } }
 
 [tool.hatch.build.hooks.vcs]
 version-file = "plann/_version.py"
