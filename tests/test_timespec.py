@@ -1,4 +1,5 @@
 from datetime import date, datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -6,6 +7,13 @@ from plann.lib import _ensure_ts, parse_add_dur, parse_dt, parse_timespec, tz
 from plann.timespec import DURATION_RE, is_duration
 
 utc = timezone.utc
+OSLO = ZoneInfo('Europe/Oslo')
+
+def test_tz_starts_at_defaults():
+    """Every test starts with the default tz settings (tests/conftest.py),
+    whatever an earlier test - in any module - assigned."""
+    assert tz.implicit_timezone is None
+    assert tz.store_timezone == ZoneInfo('UTC')
 
 class TestParseTimestamp:
     @pytest.mark.parametrize("input", ["2012-12-12", "2011-11-11 11:11:11", datetime(2011, 11, 11, 11, 11, 11), date(2012, 12, 12), "+14d"])
@@ -82,7 +90,9 @@ class TestParseTimestamp:
         ## Find the default expected timezone
         expected_tz = tz.implicit_timezone
         if not expected_tz:
-            expected_tz = datetime.now().astimezone().tzinfo
+            ## Local UTC offset in effect at dt, not now - they differ
+            ## when the test runs on the other side of a DST change.
+            expected_tz = dt.astimezone().tzinfo
         return expected_tz
 
 
@@ -183,23 +193,26 @@ class TestParseTimestamp:
         self._testTimeSpec(expected)
 
 class TestNaturalLanguage:
-    """Tests for natural language date parsing enabled by switching to dateparser."""
+    """Tests for natural language date parsing enabled by switching to dateparser.
+
+    The expected values are computed in Europe/Oslo, the implicit timezone
+    the tests set - not in the host's, whose date may differ."""
 
     def test_yesterday(self):
         tz.implicit_timezone = "Europe/Oslo"
         result = parse_dt("yesterday")
-        expected_date = (datetime.now().astimezone() - timedelta(days=1)).date()
+        expected_date = (datetime.now(OSLO) - timedelta(days=1)).date()
         assert result.date() == expected_date
 
     def test_today(self):
         tz.implicit_timezone = "Europe/Oslo"
         result = parse_dt("today")
-        assert result.date() == datetime.now().astimezone().date()
+        assert result.date() == datetime.now(OSLO).date()
 
     def test_relative_hours_ago(self):
         tz.implicit_timezone = "Europe/Oslo"
         result = parse_dt("3 hours ago")
-        expected = datetime.now().astimezone() - timedelta(hours=3)
+        expected = datetime.now(OSLO) - timedelta(hours=3)
         assert abs((result - expected).total_seconds()) < 5
 
     def test_day_name(self):
@@ -210,7 +223,7 @@ class TestNaturalLanguage:
     def test_relative_future(self):
         tz.implicit_timezone = "Europe/Oslo"
         result = parse_dt("in 2 days")
-        expected = (datetime.now().astimezone() + timedelta(days=2)).date()
+        expected = (datetime.now(OSLO) + timedelta(days=2)).date()
         got = result.date() if isinstance(result, datetime) else result
         assert got == expected
 
@@ -218,7 +231,7 @@ class TestNaturalLanguage:
         """Natural-language dates should also flow through parse_timespec()."""
         tz.implicit_timezone = "Europe/Oslo"
         start, end = parse_timespec("yesterday")
-        expected = (datetime.now().astimezone() - timedelta(days=1)).date()
+        expected = (datetime.now(OSLO) - timedelta(days=1)).date()
         got = start.date() if isinstance(start, datetime) else start
         assert got == expected
         assert end is None
@@ -253,7 +266,7 @@ class TestDurationGrammar:
 def test_ensure_ts():
     now = datetime.now()
     utcnow = now.astimezone(utc)
-    implicitnow = now.replace(tzinfo=tz.implicit_timezone)
+    implicitnow = now.replace(tzinfo=tz.implicit_timezone) if tz.implicit_timezone else now.astimezone()
 
     assert(_ensure_ts(now) == implicitnow)
     assert(_ensure_ts(utcnow) == utcnow)
