@@ -31,6 +31,7 @@ Those commands are made mostly for making `plann` more convenient to use for the
 
 * agenda - list up some of the upcoming events plus some of the upcoming tasks
 * interactive manage-tasks - go through your tasks and make suggestions
+* freebusy-sync - copy busy time between calendars, see below
 
 Note that those commands are mostly tested against Xandikos (which plann's functional tests run on) and earlier DAViCal (see the [`docs/CALENDAR_SERVER_RECOMMENDATIONS.md`](docs/CALENDAR_SERVER_RECOMMENDATIONS.md) file).
 
@@ -155,6 +156,19 @@ plann select --todo --uid=1234-5678-9abc delete
 plann select --todo --category computer-work --start=2022-04-04 --end=2022-05-05 edit --complete
 plann select --todo --category computer-work --overdue edit --postpone=5d
 ```
+
+## Sharing busy time between calendars
+
+`freebusy-sync` copies every busy period in the selected calendars (`--config-section`, plus any given with `--caldav-url`/`--calendar-url`) into the calendar of the config section given with `--to-section`, which must resolve to exactly one calendar (set `calendar_url` or `calendar_name` in it).  The copies hold only the time, in UTC, and a fixed summary - no description, location, attendees, timezone or UID from the original.  Run it regularly, e.g. from a systemd timer: copies are moved or deleted when the original changes, and other events in the target calendar are left alone.  Copies are never copied onward, so syncing both ways is safe:
+
+```
+plann --config-section work freebusy-sync --to-section private --summary 'event from work calendar'
+plann --config-section private freebusy-sync --to-section work --summary 'event from the personal calendar' --hours 9-16 --weekdays-only
+```
+
+`--hours` and `--weekdays-only` limit what is copied to working hours; an all-day event then becomes an event covering those hours.  `--dry-run` shows what would change.  If any calendar fails to load, the run stops without changing anything.  The copies carry an `X-PLANN-FREEBUSY-SOURCE` property naming the sync (`--tag`, defaulting to the `--config-section` value); don't change the tag of a running sync, or the old copies are orphaned.
+
+Switching from `select --freebusyhack`: delete the copies it made first.  They carry neither the tag nor a recognisable UID, so `freebusy-sync` treats them as real events and copies them back the other way.
 
 ## See also
 

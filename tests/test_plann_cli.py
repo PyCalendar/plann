@@ -1,5 +1,6 @@
 ## Check https://click.palletsprojects.com/en/8.1.x/testing/
 
+from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import caldav
@@ -10,6 +11,7 @@ import plann.cli as cli_mod
 import plann.commands as commands_mod
 from plann.cli import _LazyCalendars, cli, delete, edit
 from plann.commands import _process_add_args, _set_task_attribs, _sort_key_function, _todos_missing
+from tests.test_freebusy import FakeCalendar, _event, oslo
 
 
 def _make_todo(uid, *, category=False, due=False, priority=False, dtstart=False):
@@ -350,3 +352,97 @@ def test_delete_reports_empty_selection():
     res = CliRunner().invoke(delete, obj={'objs': []})
     assert res.exit_code == 0, res.output
     assert res.output.strip(), "expected some feedback on an empty selection"
+
+
+def test_freebusyhack_marked_deprecated():
+    """--freebusyhack is superseded by the freebusy-sync command."""
+    opt = _find_option(cli.commands['select'], '--freebusyhack')
+    assert 'deprecat' in (opt.help or '').lower()
+
+
+def test_freebusy_sync_command():
+    """freebusy-sync copies from the selected calendars into the first
+    calendar of --to-section, clipping with --hours and --weekdays-only."""
+    day = (datetime.now(oslo) + timedelta(days=1)).replace(hour=0, minute=0, second=0, microsecond=0)
+    while day.weekday() > 4:
+        day += timedelta(days=1)
+    source = FakeCalendar([_event(start=day.replace(hour=7), end=day.replace(hour=10))])
+    target = FakeCalendar()
+    sections = []
+
+    def section_calendars(ctx, section):
+        sections.append(section)
+        return [target]
+
+    ## --implicit-timezone sets the process-wide tz; restore it for later tests
+    with patch.object(cli_mod, '_discover_calendars', lambda kwargs: [source]), \
+         patch.object(cli_mod, '_section_calendars', section_calendars), \
+         patch.object(cli_mod.tz, '_implicit_timezone', cli_mod.tz.implicit_timezone), \
+         patch.object(cli_mod.tz, '_store_timezone', cli_mod.tz.store_timezone):
+        res = CliRunner().invoke(cli, [
+            '--implicit-timezone', 'Europe/Oslo', 'freebusy-sync', '--to-section', 'work',
+            '--summary', 'event from the personal calendar', '--hours', '9-16', '--weekdays-only'])
+    assert res.exit_code == 0, res.output
+    assert sections == ['work']
+    assert 'added 1' in res.output
+    assert 'dry run' not in res.output
+    [copy] = target.components()
+    assert copy['DTSTART'].dt == day.replace(hour=9)
+    assert copy['DTEND'].dt == day.replace(hour=10)
+    assert str(copy['X-PLANN-FREEBUSY-SOURCE']) == 'default'
+
+
+def _run_freebusy_sync(source_calendars, target_calendars, *args, config=None):
+    config = config or {'work': {}}
+    with patch.object(cli_mod, '_discover_calendars', lambda kwargs: list(source_calendars)), \
+         patch.object(cli_mod, 'read_config', lambda *a, **k: config), \
+         patch.object(cli_mod, 'find_calendars', lambda *a, **k: list(target_calendars)), \
+         patch.object(cli_mod.tz, '_implicit_timezone', cli_mod.tz.implicit_timezone), \
+         patch.object(cli_mod.tz, '_store_timezone', cli_mod.tz.store_timezone):
+        return CliRunner().invoke(cli, ['freebusy-sync', '--to-section', 'work', '--summary', 'x', *args])
+
+
+def test_freebusy_sync_needs_exactly_one_target():
+    res = _run_freebusy_sync([FakeCalendar()], [FakeCalendar(), FakeCalendar()])
+    assert res.exit_code != 0
+    assert 'exactly one' in res.output
+
+
+def test_freebusy_sync_aborts_without_source_calendars():
+    target = FakeCalendar()
+    res = _run_freebusy_sync([], [target])
+    assert res.exit_code != 0
+    assert target.objects == []
+
+
+def test_freebusy_sync_rejects_bad_hours():
+    res = _run_freebusy_sync([FakeCalendar()], [FakeCalendar()], '--hours', '9-25')
+    assert res.exit_code != 0
+    assert '--hours' in res.output
+
+
+def test_freebusy_sync_dry_run_wording():
+    res = _run_freebusy_sync([FakeCalendar()], [FakeCalendar()], '--dry-run')
+    assert res.exit_code == 0, res.output
+    assert res.output.startswith('dry run, nothing changed: added 0')
+
+
+def test_freebusy_sync_discovers_with_raise_errors():
+    """A source that fails to load must abort the run, not count as empty."""
+    seen = {}
+
+    def discover(kwargs):
+        seen['raise_errors'] = kwargs['raise_errors']
+        return [FakeCalendar()]
+
+    with patch.object(cli_mod, '_discover_calendars', discover), \
+         patch.object(cli_mod, '_section_calendars', lambda ctx, section: [FakeCalendar()]):
+        res = CliRunner().invoke(cli, ['freebusy-sync', '--to-section', 'work', '--summary', 'x'])
+    assert res.exit_code == 0, res.output
+    assert seen['raise_errors'] is True
+
+
+def test_freebusyhack_warns(caplog):
+    ctx = _FakeCtx()
+    commands_mod._select(ctx, freebusyhack='busy')
+    assert 'deprecated' in caplog.text

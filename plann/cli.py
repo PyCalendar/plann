@@ -17,6 +17,7 @@ plann is a "next generation" reimplementation of calendar-cli
 ## cli as such.  It should be moved out and made available through
 ## `from plann import ...`
 
+import datetime
 import os
 import sys
 
@@ -141,10 +142,14 @@ def cli(ctx, **kwargs):
     ## never touch the server - notably `plann <subcommand> --help` - don't
     ## connect to every configured calendar.
     ctx.obj['calendars'] = _LazyCalendars(lambda: _discover_calendars(kwargs))
+    ## the discovery options, for a command that must tighten them before the
+    ## (lazy) discovery happens
+    ctx.obj['discovery_options'] = kwargs
     ## stashed for the `configure` subcommand (and any other command that needs
     ## to know which config file / section the user pointed at)
     ctx.obj['config_file'] = kwargs['config_file']
     ctx.obj['config_section'] = kwargs['config_section']
+    ctx.obj['raise_errors'] = kwargs['raise_errors']
     for flag in ('show_native_timezone', 'store_timezone', 'implicit_timezone'):
         setattr(tz, flag, kwargs[flag])
 
@@ -156,9 +161,22 @@ def _discover_calendars(kwargs):
         config = read_config(kwargs['config_file'])
         if config:
             for meta_section in kwargs['config_section']:
-                for section in expand_config_section(config, meta_section):
-                    calendars.extend(find_calendars(config_section(config, section), raise_errors=kwargs['raise_errors']))
+                calendars.extend(_config_calendars(config, meta_section, kwargs['raise_errors']))
     return calendars
+
+def _config_calendars(config, meta_section, raise_errors):
+    calendars = []
+    for section in expand_config_section(config, meta_section):
+        calendars.extend(find_calendars(config_section(config, section), raise_errors=raise_errors))
+    return calendars
+
+def _section_calendars(ctx, meta_section):
+    """Find the calendars of one config-file section, independent of the
+    sections selected with --config-section.  Errors are raised."""
+    config = read_config(ctx.obj['config_file'])
+    if not config:
+        return []
+    return _config_calendars(config, meta_section, raise_errors=True)
 
 @cli.command()
 @click.pass_context
@@ -232,6 +250,53 @@ def _set_attr_options_(func, verb, desc=""):
 def _set_attr_options(verb="", desc=""):
     return lambda func: _set_attr_options_(func, verb, desc)
 
+@cli.command()
+@click.option('--to-section', required=True, help="Config section holding the target calendar (the first calendar found is used)")
+@click.option('--summary', required=True, help="Summary of every copied event, e.g. 'event from work calendar'")
+@click.option('--tag', help="Name of this sync, stored in the copies.  Copies with the tag that no longer match a busy period are deleted.  Defaults to the --config-section value(s)")
+@click.option('--days', default=60, show_default=True, help="Sync from the start of today and this many days ahead")
+@click.option('--hours', help="Only copy busy time within these local hours, e.g. 9-16.  All-day events become events covering these hours")
+@click.option('--weekdays-only/--all-days', default=False, help="Only copy busy time on Monday to Friday")
+@click.option('--dry-run/--no-dry-run', default=False, help="Report what would change without changing anything")
+@click.pass_context
+def freebusy_sync(ctx, to_section, summary, tag, days, hours, weekdays_only, dry_run):
+    """
+    Copy busy time from the selected calendars into another calendar.
+
+    Each busy period in the calendars selected by --config-section becomes
+    an event in the --to-section calendar holding only the time and
+    SUMMARY.  Run it regularly: copies are moved and deleted as the
+    source changes.  Example, run from a timer:
+
+    plann --config-section work freebusy-sync --to-section default --summary 'event from work calendar'
+    """
+    from plann.freebusy import freebusy_sync as freebusy_sync_
+    if hours:
+        try:
+            hours = tuple(int(x) for x in hours.split('-'))
+        except ValueError:
+            hours = ()
+        if len(hours) != 2 or not 0 <= hours[0] < hours[1] <= 24:
+            raise click.BadParameter("expected two hours within 0-24, like 9-16", param_hint='--hours')
+    ## A source that fails to load must stop the run: read as "no busy time",
+    ## it would delete every copy.
+    ctx.obj['discovery_options']['raise_errors'] = True
+    try:
+        sources = list_type(ctx.obj['calendars'])
+        targets = _section_calendars(ctx, to_section)
+    except Exception as e:
+        _abort(f"Calendar discovery failed, nothing synced: {e}")
+    if not sources:
+        _abort("No source calendars found, nothing synced")
+    if len(targets) != 1:
+        _abort(f"Config section {to_section} must resolve to exactly one calendar, found {len(targets)}.  Set calendar_url or calendar_name in it.")
+    start = _now().replace(hour=0, minute=0, second=0)
+    stats = freebusy_sync_(
+        sources, targets[0], start=start, end=start + datetime.timedelta(days=days),
+        summary=summary, tag=tag or ','.join(ctx.obj['config_section']), hours=hours,
+        weekdays=range(5) if weekdays_only else None, tzinfo=tz.implicit_timezone, dry_run=dry_run)
+    click.echo(("dry run, nothing changed: " if dry_run else "") + ", ".join(f"{k} {v}" for k, v in stats.items()))
+
 @cli.group()
 @click.option('--interactive/--no-interactive-select', help="line based interactive filtering")
 @click.option('--mass-interactive/--no-mass-interactive-select', help="editor based interactive filtering")
@@ -258,7 +323,7 @@ def _set_attr_options(verb="", desc=""):
 @click.option('--skip-children/--include-children', help="Skip children if it's parent is selected.  Useful for getting an overview of the big picture if children are subtasks", default=False)
 @click.option('--limit', help='Number of objects to show', type=int)
 @click.option('--offset', help='Skip the first objects', type=int)
-@click.option('--freebusyhack', help='removes almost everything from the ical and replaces the summary with the provided string.  (this option is to be replaced with something better in a future release)')
+@click.option('--freebusyhack', help='DEPRECATED, use the freebusy-sync command.  Removes almost everything from the ical and replaces the summary with the provided string.  Leaks the details of recurrence exceptions.')
 @click.option('--pinned-tasks/--no-pinned-tasks', default=None, help='select all/no pinned tasks')
 @click.pass_context
 def select(*largs, **kwargs):

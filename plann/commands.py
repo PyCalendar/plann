@@ -231,6 +231,7 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
     ## (typically between private and work calendars) without carrying over
     ## (too much potentially) private/confidential information.
     if freebusyhack:
+        logging.warning("--freebusyhack is deprecated, use the freebusy-sync command")
         for obj in ctx.obj['objs']:
             comp = obj.icalendar_component
             attribs = list(comp.keys())

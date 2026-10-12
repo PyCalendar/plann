@@ -5,6 +5,14 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 ## [Unreleased]
 
+### Added
+
+* `plann freebusy-sync`: keeps a copy of the busy time from one set of calendars in another calendar, holding only the time and a fixed summary.  Copies are moved and deleted as the source changes, so it can run from a timer in both directions between a work and a private calendar.  See the user guide.
+
+### Deprecated
+
+* `select --freebusyhack`, superseded by `freebusy-sync`.  It keeps the UID of the original, and it leaves the summary, description and attendees of recurrence exceptions in place.
+
 ### Changed
 
 * Shell tab completion scripts (bash, zsh, fish) now ship with the package.  They work without shell configuration for system-wide installs (and for bash user/venv installs with bash-completion 2.12+); see the README for other setups.  The `make install-completion` targets are gone.
