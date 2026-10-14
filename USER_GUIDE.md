@@ -32,7 +32,7 @@ Those commands are made mostly for making `plann` more convenient to use for the
 * agenda - list up some of the upcoming events plus some of the upcoming tasks
 * interactive manage-tasks - go through your tasks and make suggestions
 
-Note that many of those commands have only been tested on DAViCal (see the [`docs/CALENDAR_SERVER_RECOMMENDATIONS.md`](docs/CALENDAR_SERVER_RECOMMENDATIONS.md) file)
+Note that those commands are mostly tested against Xandikos (which plann's functional tests run on) and earlier DAViCal (see the [`docs/CALENDAR_SERVER_RECOMMENDATIONS.md`](docs/CALENDAR_SERVER_RECOMMENDATIONS.md) file).
 
 
 ## Global options
