@@ -243,9 +243,7 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
 def _categories_in_use(objs):
     categories = set()
     for obj in objs:
-        cats = obj.icalendar_component.get('categories')
-        if cats:
-            categories.update(cats.cats)
+        categories.update(str(x) for x in obj.icalendar_component.categories if x)
     return categories
 
 def _cats(ctx):

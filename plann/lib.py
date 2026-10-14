@@ -244,8 +244,8 @@ def add_time_tracking_timew(obj, start=None, end=None):
     comp = _icalendar_component(obj)
     tags = ['plann-export']
 
-    if 'categories' in comp:
-        for cat in comp['categories'].cats:
+    for cat in comp.categories:
+        if cat:
             tags.append(f'category:{cat}')
     tags.append(f'uid:{comp["uid"]}')
     tags.append(f'summary:{_summary(obj)}')
