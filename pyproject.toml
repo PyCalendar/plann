@@ -30,7 +30,7 @@ dependencies = [
     "sortedcontainers",
     "dateparser>=1.2",
     "python-dateutil",
-    "icalendar",
+    "icalendar>=6.2.0",
     "icalendar_searcher",
 ]
 

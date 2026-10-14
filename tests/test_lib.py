@@ -528,3 +528,22 @@ def test_procrastinate_has_no_breakpoint():
     source = _inspect.getsource(_procrastinate)
     assert 'breakpoint()' not in source
     assert 'inspect.stack()' not in source
+
+
+## RFC 5545 allows CATEGORIES more than once; icalendar then returns a list.
+## https://github.com/pycalendar/plann/issues/71
+todo_multicats = todo.replace('STATUS:NEEDS-ACTION\n', 'STATUS:NEEDS-ACTION\nCATEGORIES:\nCATEGORIES:foo\nCATEGORIES:bar,baz\n')
+
+def test_categories_in_use_multiple_lines():
+    from plann.commands import _categories_in_use
+    obj = Todo(data=todo_multicats)
+    assert _categories_in_use([obj]) == {'foo', 'bar', 'baz'}
+
+@patch("plann.lib.subprocess.run")
+def test_add_time_tracking_timew_multiple_category_lines(mock_run):
+    obj = Todo(data=todo_multicats)
+    obj.parent = Calendar()
+    obj.parent.extra_config = {'time_tracking': ['timewarrior']}
+    add_time_tracking_timew(obj, datetime(2020, 2, 20, 20, 2), datetime(2020, 2, 20, 20, 20))
+    cmd_arr = mock_run.mock_calls[0].args[0]
+    assert [x for x in cmd_arr if x.startswith('category:')] == ['category:foo', 'category:bar', 'category:baz']
