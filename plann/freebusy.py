@@ -4,7 +4,7 @@ Typical use is between a work calendar and a private calendar: the
 target gets a placeholder event for every busy period in the source,
 carrying nothing but the time and a fixed summary.
 
-Every copy has a derived UID and an X-PLANN-FREEBUSY-SOURCE property
+Every copy has a derived UID and an X-PYCAL-FREEBUSY-SOURCE property
 holding a tag naming the sync.  The tag lets a later run find, move and
 delete its own copies without touching anything else in the target
 calendar, and lets copies be recognised so they never sync back.
@@ -18,8 +18,8 @@ from typing import Any
 import icalendar
 from dateutil import tz as dateutil_tz
 
-SOURCE_PROP = 'X-PLANN-FREEBUSY-SOURCE'
-UID_PREFIX = 'plann-freebusy-'
+SOURCE_PROP = 'X-PYCAL-FREEBUSY-SOURCE'
+UID_PREFIX = 'pycal-freebusy-'
 
 
 def _end_of(comp: icalendar.cal.Component) -> datetime.date | None:

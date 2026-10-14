@@ -389,7 +389,7 @@ def test_freebusy_sync_command():
     [copy] = target.components()
     assert copy['DTSTART'].dt == day.replace(hour=9)
     assert copy['DTEND'].dt == day.replace(hour=10)
-    assert str(copy['X-PLANN-FREEBUSY-SOURCE']) == 'default'
+    assert str(copy['X-PYCAL-FREEBUSY-SOURCE']) == 'default'
 
 
 def _run_freebusy_sync(source_calendars, target_calendars, *args, config=None):

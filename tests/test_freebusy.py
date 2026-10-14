@@ -117,6 +117,7 @@ class TestBusyCopies:
         assert a['UID'] == b['UID']
         assert a['UID'] != c['UID']
         assert 'acme' not in str(a['UID'])
+        assert str(a['UID']).startswith('pycal-freebusy-')
 
     def test_recurrence_instances_get_distinct_uids(self):
         first = _event(recurrence_id=datetime(2026, 10, 14, 10, 0, tzinfo=oslo))

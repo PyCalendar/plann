@@ -166,7 +166,7 @@ plann --config-section work freebusy-sync --to-section private --summary 'event 
 plann --config-section private freebusy-sync --to-section work --summary 'event from the personal calendar' --hours 9-16 --weekdays-only
 ```
 
-`--hours` and `--weekdays-only` limit what is copied to working hours; an all-day event then becomes an event covering those hours.  `--dry-run` shows what would change.  If any calendar fails to load, the run stops without changing anything.  The copies carry an `X-PLANN-FREEBUSY-SOURCE` property naming the sync (`--tag`, defaulting to the `--config-section` value); don't change the tag of a running sync, or the old copies are orphaned.
+`--hours` and `--weekdays-only` limit what is copied to working hours; an all-day event then becomes an event covering those hours.  `--dry-run` shows what would change.  If any calendar fails to load, the run stops without changing anything.  The copies carry an `X-PYCAL-FREEBUSY-SOURCE` property naming the sync (`--tag`, defaulting to the `--config-section` value); don't change the tag of a running sync, or the old copies are orphaned.
 
 Switching from `select --freebusyhack`: delete the copies it made first.  They carry neither the tag nor a recognisable UID, so `freebusy-sync` treats them as real events and copies them back the other way.
 
