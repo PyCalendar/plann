@@ -446,3 +446,64 @@ def test_freebusyhack_warns(caplog):
     ctx = _FakeCtx()
     commands_mod._select(ctx, freebusyhack='busy')
     assert 'deprecated' in caplog.text
+
+
+def _family(**kwargs):
+    """A parent 'p' with a recurring child 'c', related both ways"""
+    parent = _make_todo('p', **kwargs)
+    parent.icalendar_component.add('RELATED-TO', 'c', parameters={'RELTYPE': 'CHILD'})
+    child = _make_todo('c', **kwargs)
+    child.icalendar_component.add('RELATED-TO', 'p', parameters={'RELTYPE': 'PARENT'})
+    child.icalendar_component.add('RRULE', {'FREQ': 'YEARLY'})
+    return parent, child
+
+
+def _record_completions(calls):
+    """Stands in for Todo.complete: records (uid, handle_rrule) and, like a
+    recurring task that advanced, leaves the child pending"""
+    def complete(self, completion_timestamp=None, handle_rrule=False, rrule_mode='safe'):
+        calls.append((str(self.icalendar_component['UID']), bool(handle_rrule)))
+        if 'RRULE' not in self.icalendar_component:
+            self._complete_ical(completion_timestamp=datetime.now().astimezone())
+    return complete
+
+
+def test_set_task_attribs_completed_parent_completes_selected_child():
+    """completed! on a parent completes the child in the selection - once,
+    honouring its RRULE - and the child is not prompted for afterwards"""
+    parent, child = _family()
+
+    def fake_select(ctx, **kwargs):
+        ctx.obj['objs'] = [parent, child]
+
+    calls = []
+    ctx = _FakeCtx()
+    with patch.object(commands_mod, '_select', fake_select), \
+         patch.object(Todo, 'save'), \
+         patch.object(Todo, 'complete', _record_completions(calls)), \
+         patch('plann.commands.click.echo'), \
+         patch('plann.commands.click.prompt', return_value='completed!') as prompt:
+        _set_task_attribs(ctx)
+
+    assert prompt.call_count == 1
+    assert calls == [('c', True), ('p', True)]
+
+
+def test_interactive_edit_complete_parent_completes_selected_child():
+    """`edit --interactive`: completing the parent completes the selected
+    child object itself (so the save at the end of the loop does not write
+    a stale copy back), once, and the child is not prompted for"""
+    parent, child = _family(due=True, dtstart=True)
+    ctx = _FakeCtx()
+    ctx.obj['objs'] = [parent, child]
+    ctx.obj['set_args'] = {}
+    calls = []
+    with patch.object(Todo, 'save'), \
+         patch.object(Todo, 'complete', _record_completions(calls)), \
+         patch('plann.interactive.click.echo'), \
+         patch('plann.commands.click.echo'), \
+         patch('plann.interactive.click.prompt', side_effect=['complete']) as prompt:
+        commands_mod._edit(ctx, interactive=True)
+
+    assert prompt.call_count == 1
+    assert calls == [('c', True), ('p', True)]
