@@ -9,9 +9,11 @@ from plann.lib import (
     _add_comma_list,
     _adjust_ical_relations,
     _caldav_objclass,
+    _complete,
     _component_type,
     _process_set_arg,
     _procrastinate,
+    _RelativeCache,
     _set_something,
     _split_vcal,
     _summary,
@@ -547,3 +549,70 @@ def test_add_time_tracking_timew_multiple_category_lines(mock_run):
     add_time_tracking_timew(obj, datetime(2020, 2, 20, 20, 2), datetime(2020, 2, 20, 20, 20))
     cmd_arr = mock_run.mock_calls[0].args[0]
     assert [x for x in cmd_arr if x.startswith('category:')] == ['category:foo', 'category:bar', 'category:baz']
+
+def _todo_with_uid(uid, status='NEEDS-ACTION'):
+    t = Todo()
+    t.data = todo.replace('19970901T130000Z-123404@host.com', uid).replace('STATUS:NEEDS-ACTION', f'STATUS:{status}')
+    return t
+
+def test_complete_also_completes_pending_children():
+    """Completing a parent means the children are done too - they are
+    auto-completed (grandchildren included) before the parent, with a
+    warning for each"""
+    parent = _todo_with_uid('parent')
+    child = _todo_with_uid('child')
+    grandchild = _todo_with_uid('grandchild')
+    done_child = _todo_with_uid('done_child', status='COMPLETED')
+    children = {'parent': [child, done_child], 'child': [grandchild]}
+    def relships(obj, reltype_wanted=None, cache=None):
+        assert reltype_wanted == 'CHILD'
+        return {'CHILD': children.get(str(obj.icalendar_component['UID']), [])}
+    order = []
+    def complete(self, **kwargs):
+        order.append(str(self.icalendar_component['UID']))
+        self._complete_ical(completion_timestamp=datetime.now(utc))
+    warnings = []
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'complete', complete):
+        _complete(parent, err_callback=warnings.append)
+    assert order == ['grandchild', 'child', 'parent']
+    assert len(warnings) == 2
+    assert all('Fix a party' in w for w in warnings)
+
+def test_complete_survives_relation_cycles():
+    a = _todo_with_uid('a')
+    b = _todo_with_uid('b')
+    children = {'a': [b], 'b': [a]}
+    def relships(obj, reltype_wanted=None, cache=None):
+        return {'CHILD': children[str(obj.icalendar_component['UID'])]}
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(a, err_callback=lambda x: None)
+    assert a.icalendar_component['STATUS'] == 'COMPLETED'
+    assert b.icalendar_component['STATUS'] == 'COMPLETED'
+
+def test_complete_selection_with_parent_and_child_completes_child_once():
+    """`select ... edit --complete` may hold both a parent and its child.
+    The child must be completed once - a recurring child is pending again
+    after completion, and would otherwise advance twice - and on the
+    selected object itself, so that saving the selection afterwards does
+    not write a stale copy back"""
+    parent = _todo_with_uid('parent')
+    child = _todo_with_uid('child')
+    cache = _RelativeCache()
+    cache.add_objects([parent, child])
+    def relships(obj, reltype_wanted=None, cache=None):
+        if str(obj.icalendar_component['UID']) != 'parent':
+            return {'CHILD': []}
+        return {'CHILD': [cache.get_object(obj.parent, 'child')]}
+    completed = []
+    def complete(self, **kwargs):
+        ## like a recurring task moved on to its next occurrence: still pending
+        completed.append(self)
+    seen = set()
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'complete', complete):
+        for obj in (parent, child):
+            _complete(obj, err_callback=lambda x: None, cache=cache, _seen=seen)
+    assert completed == [child, parent]
+    assert completed[0] is child

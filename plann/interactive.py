@@ -25,6 +25,7 @@ from icalendar.prop import vRecur
 
 from plann.lib import (
     _adjust_relations,
+    _complete,
     _component_type,
     _list,
     _now,
@@ -49,7 +50,7 @@ def _pdb_edit(obj, interactive=True):
         click.echo("happy hacking")
     breakpoint()
 
-def command_edit(obj, command, interactive=True):
+def command_edit(obj, command, interactive=True, complete_cache=None, completed=None):
     if command == 'ignore':
         return
     elif command in ('part', 'partially-complete'):
@@ -76,7 +77,7 @@ def command_edit(obj, command, interactive=True):
         ## TODO: we probably shouldn't be doing this interactively here?
         _procrastinate([obj], command.split(' ')[1], **with_params)
     elif command == 'complete':
-        obj.complete(handle_rrule=True)
+        _complete(obj, handle_rrule=True, err_callback=click.echo, cache=complete_cache, _seen=completed)
     elif command == 'cancel':
         obj.icalendar_component['STATUS'] = 'CANCELLED'
     elif command.lower().startswith('set rrule='):
@@ -213,7 +214,7 @@ def _abort(message):
     click.echo(message)
     raise click.Abort(message)
 
-def _interactive_edit(obj):
+def _interactive_edit(obj, complete_cache=None, completed=None):
     if _component_type(obj) != 'VTODO':
         raise NotImplementedError("interactive editing only implemented for tasks")
     comp = obj.icalendar_component
@@ -228,7 +229,7 @@ def _interactive_edit(obj):
     click.echo(f"pri={pri} {dtstart:%F %H:%M:%S %Z} - {due:%F %H:%M:%S %Z}: {summary}")
     input = click.prompt("postpone <n>d / ignore / part(ially-complete) / complete / split / cancel / set foo=bar / edit / family / start / pdb?", default='ignore')
     try:
-        command_edit(obj, input, interactive=True)
+        command_edit(obj, input, interactive=True, complete_cache=complete_cache, completed=completed)
     except NotImplementedError as e:
         ## e.g. `start` when extra_config.time_tracking is not configured -
         ## the prompt advertises the command, so report why it did not work
@@ -237,7 +238,7 @@ def _interactive_edit(obj):
         return
     if input == 'start':
         ## time tracking has been started - re-prompt so a follow-up command can be given for the same task
-        _interactive_edit(obj)
+        _interactive_edit(obj, complete_cache, completed)
 
 def _mass_reprioritize(objs):
     text = """\

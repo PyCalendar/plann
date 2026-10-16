@@ -459,6 +459,12 @@ class _RelativeCache:
         self._objects = {}
         self._relships = {}
 
+    def add_objects(self, objs):
+        """Seed the cache with objects already in memory, so relatives
+        resolve to those very objects rather than to fresh copies"""
+        for obj in objs:
+            self._objects[(getattr(obj.parent, 'url', None), str(obj.icalendar_component['UID']))] = obj
+
     def get_object(self, calendar, uid):
         key = (getattr(calendar, 'url', None), str(uid))
         if key not in self._objects:
@@ -515,6 +521,34 @@ def _relships_by_type(obj, reltype_wanted=None, cache=None):
                     logging.error("Inconsistency issue in relationships - has to be manually resolved. Object and other points to each other, but reltype does not match")
     cache.store_relships(obj, reltype_wanted, ret)
     return ret
+
+def _complete(obj, handle_rrule=True, rrule_mode='safe', err_callback=print, cache=None, _seen=None):
+    """Mark obj as completed.
+
+    A child has to be done before the parent can be completed, so
+    completing a parent means the pending children (and grandchildren)
+    are done as well - they get auto-completed first, with a warning for
+    each.  Recurring children are handled the same way as obj.
+
+    When completing several objects, pass the same cache (seeded with
+    the objects) and the same _seen set to every call, so that an object
+    that is also a child of another one is completed exactly once.
+    """
+    if cache is None:
+        cache = _RelativeCache()
+    if _seen is None:
+        _seen = set()
+    uid = str(obj.icalendar_component['UID'])
+    if uid in _seen:
+        return
+    _seen.add(uid)
+    for child in _relships_by_type(obj, 'CHILD', cache=cache).get('CHILD', []):
+        if str(child.icalendar_component['UID']) in _seen or not child.is_pending():
+            continue
+        err_callback(f"Completing child task '{_summary(child)}' of '{_summary(obj)}'")
+        _complete(child, handle_rrule, rrule_mode, err_callback, cache, _seen)
+    if obj.is_pending():
+        obj.complete(handle_rrule=handle_rrule, rrule_mode=rrule_mode)
 
 def _relationship_text(obj, reltype_wanted=None):
     rels = obj.get_relatives(reltypes=reltype_wanted)
