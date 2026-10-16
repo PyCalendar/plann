@@ -275,6 +275,7 @@ the first priority will always be to get food on the table.
 | Item | Rough estimate | Notes | Issue |
 |---|---|---|---|
 | Creating and editing recurring tasks from the CLI | 16-24 h | `TASK_MANAGEMENT.md` calls recurring tasks "important functionality"; today the RRULE must be written by hand or set from another client.  The completion logic already handles them | |
+| Recurring task trees | 12-20 h | `RRULE` on the root only; completing the root regenerates the subtree for the next occurrence, shifted by the same delta.  See "Recurring task trees" in `TASK_MANAGEMENT.md` | |
 | `pin` - sticking tasks to the calendar | 12-20 h | Fully specified in `DESIGN.md`, never implemented.  The conceptual core of the VTODO/VEVENT pairing idea | |
 | Loadable module support in `select` | 12-16 h | Arbitrary Python for filtering, editing and ical transformation | [#6](https://github.com/pycalendar/plann/issues/6) |
 | Mergecal support - privacy-preserving calendar merging | 12-16 h | Copy busy-time between work and private calendars without leaking detail | [#24](https://github.com/pycalendar/plann/issues/24) |

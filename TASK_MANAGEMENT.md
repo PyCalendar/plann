@@ -187,6 +187,12 @@ The current default logic is to duplicate/split the completed task into a comple
 
 There is not so much support for recurrences outside the task completion code, as for now the rrule has to be manually added when creating or editing the task, or the recurrence has to be set through some another caldav client tool.  I believe recurring tasks is an important functionality, so I will implement better support for this at some point.
 
+#### Recurring task trees
+
+A recurring job is often a tree - "varnish the boat every spring and autumn" breaks down into areas, and each area into layers that have to be done in order.  Putting an `RRULE` on every node of the tree works with the completion logic above, but it breaks the rule that a parent is due after its children: once a child is completed it advances to its next occurrence, while the parent is still pending.  `RELATED-TO` points to a UID, not to a single occurrence, so the `RECURRENCE-ID` model cannot link the right occurrences to each other either.
+
+The prior art (OmniFocus repeating projects and action groups, Todoist resetting the sub-tasks of a recurring parent; see the task model survey in calendaring-client) puts the recurrence on the root only.  The plan for plann is the same: an `RRULE` only on the root.  Completing the root completes its pending children (plann does that already), and then regenerates the subtree for the next occurrence: every descendant is copied with a new UID, its `DTSTART`/`DUE` is shifted by the same delta as the root, and the copy is linked to the root.  The completed children stay linked to the completed copy of the root.  This is not implemented yet.
+
 ### Timestamps
 **TLDR:** Timestamps are important.  DUE should indicate when we need or want to be done with the task, DURATION should be the estimated time for doing the task.  Since DURATION and DUE cannot be combined, let rather DTSTART indicate the last possible time one can start working with the task and still have a hope to get done before the DUE timestamp.
 
