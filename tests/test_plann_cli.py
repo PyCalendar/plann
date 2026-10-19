@@ -507,3 +507,65 @@ def test_interactive_edit_complete_parent_completes_selected_child():
 
     assert prompt.call_count == 1
     assert calls == [('c', True), ('p', True)]
+
+
+class _FamilyCalendar:
+    """Hands out a fresh copy of the task on every lookup, like a server"""
+    url = 'https://calendar.example.com/tasks/'
+
+    def __init__(self, objs):
+        self.data = {str(o.icalendar_component['UID']): o.data for o in objs}
+
+    def object_by_uid(self, uid):
+        obj = Todo()
+        obj.data = self.data[uid]
+        obj.parent = self
+        return obj
+    get_object_by_uid = object_by_uid
+
+
+def test_mass_interactive_edit_complete_parent_and_child_completes_child_once():
+    """`edit --multi-edit` with both parent and recurring child marked
+    complete: the child advances once, not once with the parent and once
+    on its own line"""
+    parent, child = _family(due=True)
+    cal = _FamilyCalendar([parent, child])
+    parent.parent = child.parent = cal
+    calls = []
+    with patch.object(Todo, 'save'), \
+         patch.object(Todo, 'complete', _record_completions(calls)), \
+         patch('plann.interactive.click.echo'), \
+         patch('plann.interactive._editor', return_value="complete p: task p\ncomplete c: task c\n"):
+        commands_mod._mass_interactive_edit([parent, child])
+    assert calls == [('c', True), ('p', True)]
+
+
+def test_edit_complete_selection_with_parent_and_child_completes_child_once():
+    """`select ... edit --complete` holding parent and recurring child, in
+    either order: the child is completed once"""
+    for order in ((0, 1), (1, 0)):
+        family = _family(due=True)
+        ctx = _FakeCtx()
+        ctx.obj['objs'] = [family[i] for i in order]
+        ctx.obj['set_args'] = {}
+        calls = []
+        with patch.object(Todo, 'save'), \
+             patch.object(Todo, 'complete', _record_completions(calls)), \
+             patch('plann.commands.click.echo'):
+            commands_mod._edit(ctx, complete=True)
+        assert calls == [('c', True), ('p', True)]
+
+
+def test_mass_interactive_edit_works_on_tasks_fetched_after_editing():
+    """The editor may stay open for a while; a line acts on the task as it
+    is on the server when the editor closes, not on the listed copy"""
+    task = _make_todo('t', due=True)
+    cal = _FamilyCalendar([task])
+    task.parent = cal
+    saved = []
+    with patch.object(Todo, 'save', lambda self: saved.append(self)), \
+         patch('plann.interactive._editor', return_value="set priority=3 t: task t\n"):
+        commands_mod._mass_interactive_edit([task])
+    assert len(saved) == 1
+    assert saved[0] is not task
+    assert saved[0].icalendar_component['PRIORITY'] == 3

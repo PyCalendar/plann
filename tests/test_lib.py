@@ -552,7 +552,7 @@ def test_add_time_tracking_timew_multiple_category_lines(mock_run):
 
 def _todo_with_uid(uid, status='NEEDS-ACTION'):
     t = Todo()
-    t.data = todo.replace('19970901T130000Z-123404@host.com', uid).replace('STATUS:NEEDS-ACTION', f'STATUS:{status}')
+    t.data = todo.replace('19970901T130000Z-123404@host.com', uid).replace('STATUS:NEEDS-ACTION', f'STATUS:{status}').replace('SUMMARY:Fix a party', f'SUMMARY:task {uid}')
     return t
 
 def test_complete_also_completes_pending_children():
@@ -576,8 +576,8 @@ def test_complete_also_completes_pending_children():
          patch.object(Todo, 'complete', complete):
         _complete(parent, err_callback=warnings.append)
     assert order == ['grandchild', 'child', 'parent']
-    assert len(warnings) == 2
-    assert all('Fix a party' in w for w in warnings)
+    assert warnings == ["Completing child task 'task child' of 'task parent'",
+                        "Completing child task 'task grandchild' of 'task child'"]
 
 def test_complete_survives_relation_cycles():
     a = _todo_with_uid('a')
@@ -616,3 +616,44 @@ def test_complete_selection_with_parent_and_child_completes_child_once():
             _complete(obj, err_callback=lambda x: None, cache=cache, _seen=seen)
     assert completed == [child, parent]
     assert completed[0] is child
+
+def test_complete_explicit_non_pending_task_warns():
+    """caldav cannot complete a task that is not pending, e.g. a
+    cancelled one; it is left alone, but not silently"""
+    cancelled = _todo_with_uid('cancelled', status='CANCELLED')
+    warnings = []
+    with patch('plann.lib._relships_by_type', return_value={}), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(cancelled, err_callback=warnings.append)
+    assert cancelled.icalendar_component['STATUS'] == 'CANCELLED'
+    assert warnings == ["Not completing 'task cancelled': STATUS is CANCELLED"]
+
+def test_complete_skips_child_with_non_standard_status():
+    """A child with a STATUS outside the RFC is left alone, with a
+    warning, rather than crashing halfway through the tree"""
+    parent = _todo_with_uid('parent')
+    odd = _todo_with_uid('odd', status='WAITING')
+    def relships(obj, reltype_wanted=None, cache=None):
+        return {'CHILD': [odd] if obj is parent else []}
+    warnings = []
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(parent, err_callback=warnings.append)
+    assert parent.icalendar_component['STATUS'] == 'COMPLETED'
+    assert odd.icalendar_component['STATUS'] == 'WAITING'
+    assert len(warnings) == 1 and 'task odd' in warnings[0]
+
+def test_complete_task_with_non_standard_status_warns():
+    """A selected task with a STATUS outside the RFC gets a warning, not
+    a crash after its children were completed"""
+    odd = _todo_with_uid('odd', status='WAITING')
+    child = _todo_with_uid('child')
+    def relships(obj, reltype_wanted=None, cache=None):
+        return {'CHILD': [child] if obj is odd else []}
+    warnings = []
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(odd, err_callback=warnings.append)
+    assert odd.icalendar_component['STATUS'] == 'WAITING'
+    assert child.icalendar_component['STATUS'] == 'NEEDS-ACTION'
+    assert warnings == ["Not completing 'task odd': STATUS is WAITING"]

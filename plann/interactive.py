@@ -32,6 +32,7 @@ from plann.lib import (
     _process_set_arg,
     _procrastinate,
     _relationship_text,
+    _RelativeCache,
     _set_something,
     _split_vcal,
     _summary,
@@ -299,10 +300,15 @@ def _mass_interactive_edit(objs, default='ignore'):
         ## TODO: this is bad design
         template=default + " {UID}: due={DUE} Pri={PRIORITY:?0?} {SUMMARY:?{DESCRIPTION:?(no summary given)?}?} (STATUS={STATUS:-})", filter=lambda obj: obj.icalendar_component.get('STATUS', 'NEEDS-ACTION')=='NEEDS-ACTION'))
     edited = _editor(text)
+    ## tasks are fetched once the editor is closed, and shared between
+    ## lines, so a task completed along with its parent is not completed
+    ## again on its own line
+    complete_cache = _RelativeCache()
+    completed = set()
     for line in edited.split('\n'):
         ## TODO: BUG: does not work if the source data comes from multiple calendars!
         ## (possible fix: make a dict from uid to calendar(s))
-        _command_line_edit(line, interactive=True, calendar=objs[0].parent)
+        _command_line_edit(line, interactive=True, calendar=objs[0].parent, complete_cache=complete_cache, completed=completed)
 
 def interactive_split_task(obj, partially_complete=False, too_big=True):
     comp = obj.icalendar_component
@@ -367,7 +373,7 @@ def _strip_line(line):
     line = line.strip()
     return line
 
-def _get_obj_from_line(line, calendar):
+def _get_obj_from_line(line, calendar, cache=None):
     ## TODO: the calendar we get here may be invalid.
     ## We need to map uids to objects when fetching events
     ## this should be done globally to reduce code duplication
@@ -378,10 +384,12 @@ def _get_obj_from_line(line, calendar):
     found = uid_re.match(line)
     assert found
     uid = found.group(1)
+    if cache is not None:
+        return cache.get_object(calendar, uid)
     obj = calendar.object_by_uid(uid)
     return obj
 
-def _command_line_edit(line, calendar, interactive=True):
+def _command_line_edit(line, calendar, interactive=True, complete_cache=None, completed=None):
     regexp = re.compile(rf"((?:set [^ ]*=[^ ]*)|(?:postpone (?:[0-9]+[{DURATION_UNITS}]|20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]))|[^ ]*) (.*)$")
     line = _strip_line(line)
     if not line:
@@ -389,7 +397,7 @@ def _command_line_edit(line, calendar, interactive=True):
     splitted = regexp.match(line)
     assert splitted
     command = splitted.group(1)
-    obj = _get_obj_from_line(splitted.group(2), calendar)
+    obj = _get_obj_from_line(splitted.group(2), calendar, complete_cache)
     assert obj
-    command_edit(obj, command, interactive)
+    command_edit(obj, command, interactive, complete_cache, completed)
 

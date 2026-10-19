@@ -542,13 +542,29 @@ def _complete(obj, handle_rrule=True, rrule_mode='safe', err_callback=print, cac
     if uid in _seen:
         return
     _seen.add(uid)
+    try:
+        pending = obj.is_pending()
+    except AssertionError:
+        ## caldav refuses a STATUS outside the RFC
+        pending = False
+    if not pending:
+        ## checked before the children, so a task that cannot be
+        ## completed does not leave its tree half done
+        err_callback(f"Not completing '{_summary(obj)}': STATUS is {obj.icalendar_component.get('STATUS')}")
+        return
     for child in _relships_by_type(obj, 'CHILD', cache=cache).get('CHILD', []):
-        if str(child.icalendar_component['UID']) in _seen or not child.is_pending():
+        if str(child.icalendar_component['UID']) in _seen:
+            continue
+        try:
+            if not child.is_pending():
+                continue
+        except AssertionError:
+            ## caldav refuses a STATUS outside the RFC
+            err_callback(f"Not completing child task '{_summary(child)}' of '{_summary(obj)}': unknown STATUS {child.icalendar_component.get('STATUS')}")
             continue
         err_callback(f"Completing child task '{_summary(child)}' of '{_summary(obj)}'")
         _complete(child, handle_rrule, rrule_mode, err_callback, cache, _seen)
-    if obj.is_pending():
-        obj.complete(handle_rrule=handle_rrule, rrule_mode=rrule_mode)
+    obj.complete(handle_rrule=handle_rrule, rrule_mode=rrule_mode)
 
 def _relationship_text(obj, reltype_wanted=None):
     rels = obj.get_relatives(reltypes=reltype_wanted)
