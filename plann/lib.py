@@ -615,7 +615,7 @@ def _set_something(obj, arg, value):
             obj.set_relation(reltype=arg, other=val)
     elif arg == 'duration':
         obj.set_duration(value)
-    elif arg in ('due', 'dtend'): ## TODO: dtstart!
+    elif arg in ('due', 'dtend'): ## moves DTSTART too - _edit sets DTSTART after this
         getattr(obj, f"set_{arg}")(value, move_dtstart=True, check_dependent=True)
     elif _is_comma_list_attr(arg):
         ## a list (already processed by _process_set_arg) or a raw comma string
