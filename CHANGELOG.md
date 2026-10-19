@@ -22,6 +22,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 * `interactive set-task-attribs` (also run by `interactive manage-tasks`): a task marked `completed!` at one prompt was asked about again at the next one, and answering `completed!` there crashed on the already-completed task.  Regression in v1.2.0.
 * `list-categories` and timewarrior time tracking crashed on a task with more than one CATEGORIES line.  https://github.com/pycalendar/plann/issues/71
+* `{CATEGORIES}` in a `list --template` printed the internal `vCategory([...])` representation instead of a comma-separated list.
 
 ## v1.2.0 - 2026-09-16
 

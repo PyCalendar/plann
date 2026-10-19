@@ -258,7 +258,7 @@ def _mass_reprioritize(objs):
         while obj.icalendar_component.get('PRIORITY', 0)>current_pri:
             current_pri += 1
             text += f"\n=== PRIORITY {current_pri}\n"
-        text += template.format(**obj.icalendar_component) + "\n"
+        text += template.format_component(obj.icalendar_component) + "\n"
     edited = _editor(text)
     current_pri = 0
     for line in edited.split('\n'):

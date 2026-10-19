@@ -82,7 +82,7 @@ def _sort_key_function(skey):
     if '{' in skey:
         template = Template(skey)
         def fkey(obj):
-            return template.format(**obj.icalendar_component)
+            return template.format_component(obj.icalendar_component)
     elif skey == 'get_duration()':
         def fkey(obj):
             return obj.get_duration()

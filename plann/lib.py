@@ -648,7 +648,7 @@ def _list(objs, ics=False, template="{DTSTART:?{DUE:?(date missing)?}?%F %H:%M:%
             if 'calendar_name' in template.template:
                 more_info['calendar_name'] = obj.parent.get_display_name()
             more_info['calendar_url'] = obj.parent.url
-            output.append(" "*indent + template.format(**obj.icalendar_component, **more_info))
+            output.append(" "*indent + template.format_component(obj.icalendar_component, **more_info))
             ## Recursively add children in an indented way
             output.extend(_list(below, template=template, top_down=top_down, bottom_up=bottom_up, indent=indent+2, echo=False, filter=filter, cache=cache))
             if indent and top_down:

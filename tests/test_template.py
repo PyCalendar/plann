@@ -1,5 +1,7 @@
 from datetime import date
 
+import icalendar
+
 from plann.lib import tz
 from plann.template import Template
 
@@ -55,6 +57,26 @@ class TestTemplate:
         text = template.format()
         assert text == "Date is maybe bar"
 
+    def test_categories_rendered_as_comma_separated_list(self):
+        todo = icalendar.Todo()
+        todo.add('categories', ['RL', 'claude'])
+        assert Template("{CATEGORIES}").format_component(todo) == "RL,claude"
+        assert Template("{CATEGORIES:>12}").format_component(todo) == "   RL,claude"
 
+        ## Several CATEGORIES lines in one component
+        todo.add('categories', ['keyboard'])
+        assert Template("{CATEGORIES}").format_component(todo) == "RL,claude,keyboard"
 
+    def test_missing_categories_gives_default(self):
+        todo = icalendar.Todo()
+        assert Template("{CATEGORIES:?none?}").format_component(todo) == "none"
 
+    def test_bad_field_lookup_gives_empty_string(self):
+        todo = icalendar.Todo()
+        todo.add('categories', ['RL'])
+        assert Template("[{CATEGORIES.cats}]").format_component(todo) == "[]"
+
+    def test_format_component_takes_extra_keys(self):
+        todo = icalendar.Todo()
+        todo.add('summary', 'foo')
+        assert Template("{SUMMARY} {calendar_name}").format_component(todo, calendar_name="bar") == "foo bar"

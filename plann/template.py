@@ -34,6 +34,19 @@ class Template(string.Formatter):
     def format(self, *pargs, **kwargs):
         return super().format(self.template, *pargs, **kwargs)
 
+    def format_component(self, comp, **kwargs):
+        """Format an icalendar component, with CATEGORIES as a comma-separated list"""
+        values = dict(comp)
+        if 'CATEGORIES' in comp:
+            values['CATEGORIES'] = ",".join(str(c) for c in comp.categories)
+        return self.format(**values, **kwargs)
+
+    def get_field(self, field_name, args, kwargs):
+        try:
+            return super().get_field(field_name, args, kwargs)
+        except Exception:
+            return (no_value, field_name)
+
     def get_value(self, key, args, kwds):
         try:
             ret = string.Formatter.get_value(self, key, args, kwds)
