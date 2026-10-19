@@ -25,12 +25,14 @@ from icalendar.prop import vRecur
 
 from plann.lib import (
     _adjust_relations,
+    _complete,
     _component_type,
     _list,
     _now,
     _process_set_arg,
     _procrastinate,
     _relationship_text,
+    _RelativeCache,
     _set_something,
     _split_vcal,
     _summary,
@@ -49,7 +51,7 @@ def _pdb_edit(obj, interactive=True):
         click.echo("happy hacking")
     breakpoint()
 
-def command_edit(obj, command, interactive=True):
+def command_edit(obj, command, interactive=True, complete_cache=None, completed=None):
     if command == 'ignore':
         return
     elif command in ('part', 'partially-complete'):
@@ -76,7 +78,7 @@ def command_edit(obj, command, interactive=True):
         ## TODO: we probably shouldn't be doing this interactively here?
         _procrastinate([obj], command.split(' ')[1], **with_params)
     elif command == 'complete':
-        obj.complete(handle_rrule=True)
+        _complete(obj, handle_rrule=True, err_callback=click.echo, cache=complete_cache, _seen=completed)
     elif command == 'cancel':
         obj.icalendar_component['STATUS'] = 'CANCELLED'
     elif command.lower().startswith('set rrule='):
@@ -213,7 +215,7 @@ def _abort(message):
     click.echo(message)
     raise click.Abort(message)
 
-def _interactive_edit(obj):
+def _interactive_edit(obj, complete_cache=None, completed=None):
     if _component_type(obj) != 'VTODO':
         raise NotImplementedError("interactive editing only implemented for tasks")
     comp = obj.icalendar_component
@@ -228,7 +230,7 @@ def _interactive_edit(obj):
     click.echo(f"pri={pri} {dtstart:%F %H:%M:%S %Z} - {due:%F %H:%M:%S %Z}: {summary}")
     input = click.prompt("postpone <n>d / ignore / part(ially-complete) / complete / split / cancel / set foo=bar / edit / family / start / pdb?", default='ignore')
     try:
-        command_edit(obj, input, interactive=True)
+        command_edit(obj, input, interactive=True, complete_cache=complete_cache, completed=completed)
     except NotImplementedError as e:
         ## e.g. `start` when extra_config.time_tracking is not configured -
         ## the prompt advertises the command, so report why it did not work
@@ -237,7 +239,7 @@ def _interactive_edit(obj):
         return
     if input == 'start':
         ## time tracking has been started - re-prompt so a follow-up command can be given for the same task
-        _interactive_edit(obj)
+        _interactive_edit(obj, complete_cache, completed)
 
 def _mass_reprioritize(objs):
     text = """\
@@ -298,10 +300,15 @@ def _mass_interactive_edit(objs, default='ignore'):
         ## TODO: this is bad design
         template=default + " {UID}: due={DUE} Pri={PRIORITY:?0?} {SUMMARY:?{DESCRIPTION:?(no summary given)?}?} (STATUS={STATUS:-})", filter=lambda obj: obj.icalendar_component.get('STATUS', 'NEEDS-ACTION')=='NEEDS-ACTION'))
     edited = _editor(text)
+    ## tasks are fetched once the editor is closed, and shared between
+    ## lines, so a task completed along with its parent is not completed
+    ## again on its own line
+    complete_cache = _RelativeCache()
+    completed = set()
     for line in edited.split('\n'):
         ## TODO: BUG: does not work if the source data comes from multiple calendars!
         ## (possible fix: make a dict from uid to calendar(s))
-        _command_line_edit(line, interactive=True, calendar=objs[0].parent)
+        _command_line_edit(line, interactive=True, calendar=objs[0].parent, complete_cache=complete_cache, completed=completed)
 
 def interactive_split_task(obj, partially_complete=False, too_big=True):
     comp = obj.icalendar_component
@@ -366,7 +373,7 @@ def _strip_line(line):
     line = line.strip()
     return line
 
-def _get_obj_from_line(line, calendar):
+def _get_obj_from_line(line, calendar, cache=None):
     ## TODO: the calendar we get here may be invalid.
     ## We need to map uids to objects when fetching events
     ## this should be done globally to reduce code duplication
@@ -377,10 +384,12 @@ def _get_obj_from_line(line, calendar):
     found = uid_re.match(line)
     assert found
     uid = found.group(1)
+    if cache is not None:
+        return cache.get_object(calendar, uid)
     obj = calendar.object_by_uid(uid)
     return obj
 
-def _command_line_edit(line, calendar, interactive=True):
+def _command_line_edit(line, calendar, interactive=True, complete_cache=None, completed=None):
     regexp = re.compile(rf"((?:set [^ ]*=[^ ]*)|(?:postpone (?:[0-9]+[{DURATION_UNITS}]|20[0-9][0-9]-[0-9][0-9]-[0-9][0-9]))|[^ ]*) (.*)$")
     line = _strip_line(line)
     if not line:
@@ -388,7 +397,7 @@ def _command_line_edit(line, calendar, interactive=True):
     splitted = regexp.match(line)
     assert splitted
     command = splitted.group(1)
-    obj = _get_obj_from_line(splitted.group(2), calendar)
+    obj = _get_obj_from_line(splitted.group(2), calendar, complete_cache)
     assert obj
-    command_edit(obj, command, interactive)
+    command_edit(obj, command, interactive, complete_cache, completed)
 

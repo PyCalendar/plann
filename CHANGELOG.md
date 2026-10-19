@@ -15,6 +15,8 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 ### Changed
 
+* Completing a task (`edit --complete`, `complete` in the interactive and multi-edit modes, `completed!` in `set-task-attribs`) now also completes its pending child tasks, recursively, and prints a warning for each.  A child has to be done before the parent can be completed.
+* `completed!` in `set-task-attribs` moves a recurring task on to its next recurrence, like `edit --complete` does, instead of completing the whole series.
 * Shell tab completion scripts (bash, zsh, fish) now ship with the package.  They work without shell configuration for system-wide installs (and for bash user/venv installs with bash-completion 2.12+); see the README for other setups.  The `make install-completion` targets are gone.
 * icalendar 6.2.0 or newer is required.
 

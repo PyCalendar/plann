@@ -9,9 +9,11 @@ from plann.lib import (
     _add_comma_list,
     _adjust_ical_relations,
     _caldav_objclass,
+    _complete,
     _component_type,
     _process_set_arg,
     _procrastinate,
+    _RelativeCache,
     _set_something,
     _split_vcal,
     _summary,
@@ -547,3 +549,111 @@ def test_add_time_tracking_timew_multiple_category_lines(mock_run):
     add_time_tracking_timew(obj, datetime(2020, 2, 20, 20, 2), datetime(2020, 2, 20, 20, 20))
     cmd_arr = mock_run.mock_calls[0].args[0]
     assert [x for x in cmd_arr if x.startswith('category:')] == ['category:foo', 'category:bar', 'category:baz']
+
+def _todo_with_uid(uid, status='NEEDS-ACTION'):
+    t = Todo()
+    t.data = todo.replace('19970901T130000Z-123404@host.com', uid).replace('STATUS:NEEDS-ACTION', f'STATUS:{status}').replace('SUMMARY:Fix a party', f'SUMMARY:task {uid}')
+    return t
+
+def test_complete_also_completes_pending_children():
+    """Completing a parent means the children are done too - they are
+    auto-completed (grandchildren included) before the parent, with a
+    warning for each"""
+    parent = _todo_with_uid('parent')
+    child = _todo_with_uid('child')
+    grandchild = _todo_with_uid('grandchild')
+    done_child = _todo_with_uid('done_child', status='COMPLETED')
+    children = {'parent': [child, done_child], 'child': [grandchild]}
+    def relships(obj, reltype_wanted=None, cache=None):
+        assert reltype_wanted == 'CHILD'
+        return {'CHILD': children.get(str(obj.icalendar_component['UID']), [])}
+    order = []
+    def complete(self, **kwargs):
+        order.append(str(self.icalendar_component['UID']))
+        self._complete_ical(completion_timestamp=datetime.now(utc))
+    warnings = []
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'complete', complete):
+        _complete(parent, err_callback=warnings.append)
+    assert order == ['grandchild', 'child', 'parent']
+    assert warnings == ["Completing child task 'task child' of 'task parent'",
+                        "Completing child task 'task grandchild' of 'task child'"]
+
+def test_complete_survives_relation_cycles():
+    a = _todo_with_uid('a')
+    b = _todo_with_uid('b')
+    children = {'a': [b], 'b': [a]}
+    def relships(obj, reltype_wanted=None, cache=None):
+        return {'CHILD': children[str(obj.icalendar_component['UID'])]}
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(a, err_callback=lambda x: None)
+    assert a.icalendar_component['STATUS'] == 'COMPLETED'
+    assert b.icalendar_component['STATUS'] == 'COMPLETED'
+
+def test_complete_selection_with_parent_and_child_completes_child_once():
+    """`select ... edit --complete` may hold both a parent and its child.
+    The child must be completed once - a recurring child is pending again
+    after completion, and would otherwise advance twice - and on the
+    selected object itself, so that saving the selection afterwards does
+    not write a stale copy back"""
+    parent = _todo_with_uid('parent')
+    child = _todo_with_uid('child')
+    cache = _RelativeCache()
+    cache.add_objects([parent, child])
+    def relships(obj, reltype_wanted=None, cache=None):
+        if str(obj.icalendar_component['UID']) != 'parent':
+            return {'CHILD': []}
+        return {'CHILD': [cache.get_object(obj.parent, 'child')]}
+    completed = []
+    def complete(self, **kwargs):
+        ## like a recurring task moved on to its next occurrence: still pending
+        completed.append(self)
+    seen = set()
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'complete', complete):
+        for obj in (parent, child):
+            _complete(obj, err_callback=lambda x: None, cache=cache, _seen=seen)
+    assert completed == [child, parent]
+    assert completed[0] is child
+
+def test_complete_explicit_non_pending_task_warns():
+    """caldav cannot complete a task that is not pending, e.g. a
+    cancelled one; it is left alone, but not silently"""
+    cancelled = _todo_with_uid('cancelled', status='CANCELLED')
+    warnings = []
+    with patch('plann.lib._relships_by_type', return_value={}), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(cancelled, err_callback=warnings.append)
+    assert cancelled.icalendar_component['STATUS'] == 'CANCELLED'
+    assert warnings == ["Not completing 'task cancelled': STATUS is CANCELLED"]
+
+def test_complete_skips_child_with_non_standard_status():
+    """A child with a STATUS outside the RFC is left alone, with a
+    warning, rather than crashing halfway through the tree"""
+    parent = _todo_with_uid('parent')
+    odd = _todo_with_uid('odd', status='WAITING')
+    def relships(obj, reltype_wanted=None, cache=None):
+        return {'CHILD': [odd] if obj is parent else []}
+    warnings = []
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(parent, err_callback=warnings.append)
+    assert parent.icalendar_component['STATUS'] == 'COMPLETED'
+    assert odd.icalendar_component['STATUS'] == 'WAITING'
+    assert len(warnings) == 1 and 'task odd' in warnings[0]
+
+def test_complete_task_with_non_standard_status_warns():
+    """A selected task with a STATUS outside the RFC gets a warning, not
+    a crash after its children were completed"""
+    odd = _todo_with_uid('odd', status='WAITING')
+    child = _todo_with_uid('child')
+    def relships(obj, reltype_wanted=None, cache=None):
+        return {'CHILD': [child] if obj is odd else []}
+    warnings = []
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(odd, err_callback=warnings.append)
+    assert odd.icalendar_component['STATUS'] == 'WAITING'
+    assert child.icalendar_component['STATUS'] == 'NEEDS-ACTION'
+    assert warnings == ["Not completing 'task odd': STATUS is WAITING"]

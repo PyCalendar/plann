@@ -157,6 +157,8 @@ plann select --todo --category computer-work --start=2022-04-04 --end=2022-05-05
 plann select --todo --category computer-work --overdue edit --postpone=5d
 ```
 
+A child task has to be done before its parent can be completed, so completing a parent also completes its pending children and grandchildren, with a warning for each.  A recurring child moves on to its next recurrence, the same as a recurring task completed on its own.  Children are found through the parent's own `RELATED-TO;RELTYPE=CHILD` lines; a child that is linked only from its own side (`RELTYPE=PARENT`, as some other clients write it) is not found.  When a recurring parent moves on to its next recurrence, its non-recurring children stay completed and linked to it, and no fresh ones are made for the next recurrence (regenerating them is planned, see [TASK_MANAGEMENT.md](TASK_MANAGEMENT.md)).
+
 ## Sharing busy time between calendars
 
 `freebusy-sync` copies every busy period in the selected calendars (`--config-section`, plus any given with `--caldav-url`/`--calendar-url`) into the calendar of the config section given with `--to-section`, which must resolve to exactly one calendar (set `calendar_url` or `calendar_name` in it).  The copies hold only the time, in UTC, and a fixed summary - no description, location, attendees, timezone or UID from the original.  Run it regularly, e.g. from a systemd timer: copies are moved or deleted when the original changes, and other events in the target calendar are left alone.  Copies are never copied onward, so syncing both ways is safe:

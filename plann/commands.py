@@ -26,11 +26,13 @@ from plann.lib import (
     _add_comma_list,
     _comma_list_canonical,
     _comma_list_tokens,
+    _complete,
     _component_type,
     _is_comma_list_attr,
     _list,
     _process_set_arg,
     _procrastinate,
+    _RelativeCache,
     _relships_by_type,
     _set_something,
     _summary,
@@ -298,9 +300,13 @@ def _edit(ctx, cancel=None, interactive_ical=False, interactive_relations=False,
         ## TODO: should be possible to combine this with other opitions
         return
 
+    complete_cache = _RelativeCache()
+    complete_cache.add_objects(ctx.obj['objs'])
+    completed = set()
     for obj in ctx.obj['objs']:
-        if interactive:
-            _interactive_edit(obj)
+        if interactive and str(obj.icalendar_component['UID']) not in completed:
+            ## (a task completed along with its parent is not asked about again)
+            _interactive_edit(obj, complete_cache, completed)
         comp = obj.icalendar_component
         if kwargs.get('pdb'):
             _pdb_edit(obj)
@@ -309,7 +315,7 @@ def _edit(ctx, cancel=None, interactive_ical=False, interactive_relations=False,
         for canonical, tokens in add_args:
             _add_comma_list(obj, canonical, tokens)
         if complete:
-            obj.complete(handle_rrule=complete_recurrence_mode, rrule_mode=complete_recurrence_mode)
+            _complete(obj, handle_rrule=complete_recurrence_mode, rrule_mode=complete_recurrence_mode, err_callback=lambda msg: click.echo(msg, err=True), cache=complete_cache, _seen=completed)
         elif complete is False:
             obj.uncomplete()
         if cancel:
@@ -589,6 +595,11 @@ def _set_task_attribs(ctx):
     ## rather than issuing a fresh server select for each attribute (E4).
     _select(ctx=ctx, todo=True, sort_key=['{DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}', '{PRIORITY:?0?}'])
     todos = list(ctx.obj['objs'])
+    ## completing a task completes its children - make them resolve to the
+    ## objects in todos, so a stale copy is neither prompted for nor saved
+    complete_cache = _RelativeCache()
+    complete_cache.add_objects(todos)
+    completed = set()
 
     def _set_something_(something, help_text, help_url=None, default=None, objs=None):
         something_ = _comma_list_canonical(something) if _is_comma_list_attr(something) else something
@@ -620,15 +631,17 @@ def _set_task_attribs(ctx):
             click.echo(f"For each task, {help_text}")
             click.echo('(or enter "completed!" with bang but without quotes if the task is already done)')
             for obj in objs:
+                if str(obj.icalendar_component['UID']) in completed:
+                    continue
                 comp = obj.icalendar_component
                 summary = _summary(comp)
                 value = click.prompt(summary, default=default)
                 if value == 'completed!':
-                    obj.complete()
+                    _complete(obj, err_callback=lambda msg: click.echo(msg, err=True), cache=complete_cache, _seen=completed)
                     obj.save()
-                    ## todos is fetched once - drop the task so later
-                    ## attributes don't prompt for it again
-                    todos.remove(obj)
+                    ## todos is fetched once - drop the task and the children
+                    ## completed with it, so later attributes don't prompt for them
+                    todos[:] = [x for x in todos if str(x.icalendar_component['UID']) not in completed]
                     continue
                 if _is_comma_list_attr(something):
                     comp.add(something_, _comma_list_tokens(something, value))
