@@ -555,6 +555,9 @@ def _complete(obj, handle_rrule=True, rrule_mode='safe', err_callback=print, cac
     for child in _relships_by_type(obj, 'CHILD', cache=cache).get('CHILD', []):
         if str(child.icalendar_component['UID']) in _seen:
             continue
+        if not isinstance(child, caldav.Todo):
+            ## an event or journal has nothing to complete
+            continue
         try:
             if not child.is_pending():
                 continue

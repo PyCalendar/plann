@@ -657,3 +657,29 @@ def test_complete_task_with_non_standard_status_warns():
     assert odd.icalendar_component['STATUS'] == 'WAITING'
     assert child.icalendar_component['STATUS'] == 'NEEDS-ACTION'
     assert warnings == ["Not completing 'task odd': STATUS is WAITING"]
+
+def test_complete_skips_event_child():
+    """A task may have an event (or journal) as a child; it has no
+    completion state and is left alone instead of crashing"""
+    from caldav import Event
+    parent = _todo_with_uid('parent')
+    event = Event(data="""BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example Corp.//CalDAV Client//EN
+BEGIN:VEVENT
+UID:event-child
+DTSTAMP:20200516T060000Z
+DTSTART:20200516T080000Z
+DTEND:20200516T081000Z
+SUMMARY:an event
+END:VEVENT
+END:VCALENDAR
+""")
+    def relships(obj, reltype_wanted=None, cache=None):
+        return {'CHILD': [event] if obj is parent else []}
+    warnings = []
+    with patch('plann.lib._relships_by_type', side_effect=relships), \
+         patch.object(Todo, 'save'), patch.object(Todo, 'load'):
+        _complete(parent, err_callback=warnings.append)
+    assert parent.icalendar_component['STATUS'] == 'COMPLETED'
+    assert warnings == []
