@@ -165,7 +165,16 @@ The connection settings (`caldav_url`, `caldav_user`, `caldav_pass`, `caldav_pro
 }
 ```
 
-Only the connection settings are expanded; other keys, such as `calendar_url` and `calendar_name`, are used as written.
+Instead of a password in the file or the environment, `caldav_password_command` may name a program (as a list of the program and its arguments) whose output is the password, and `caldav_password_keyring` a service name to look up in the system keyring:
+
+```yaml
+default:
+  caldav_url: http://foo.bar.example.com/caldav/
+  caldav_user: luser
+  caldav_password_command: [pass, show, dav/work]
+```
+
+The command is only run when the config file is writable by nobody but its owner (`chmod 600`); `plann configure` writes the file with your umask, so check it after configuring.  A section may also be written as `kind: caldav` with plain keys (`url`, `username`, `password_command`, ...).  The file format is shared with the caldav library and other tools, and is specified in [calendaring-config](https://github.com/pycalendar/calendaring-config/blob/main/docs/format.md).
 
 A `features` key may be given to enable server-specific compatibility workarounds, referring to a server profile in the caldav library's `compatibility_hints` module (e.g. `"features": "ecloud"`).  For servers with a known profile, `caldav_url` may even be omitted - the caldav library will derive the URL from the profile.
 

@@ -135,6 +135,10 @@ def cli(ctx, **kwargs):
     ## caldav_client, principal and calendar
 
     ctx.ensure_object(dict)
+    ## caldav checks the config file before running a password_command
+    ## from it, and needs a real path for that, not `~/...`
+    if kwargs['config_file']:
+        kwargs['config_file'] = os.path.expanduser(kwargs['config_file'])
     ## TODO: add all relevant connection parameters for the DAVClient as options
     ## TODO: logic to read the config file and edit kwargs from config file
     ## TODO: catch errors, present nice error messages
@@ -161,13 +165,13 @@ def _discover_calendars(kwargs):
         config = read_config(kwargs['config_file'])
         if config:
             for meta_section in kwargs['config_section']:
-                calendars.extend(_config_calendars(config, meta_section, kwargs['raise_errors']))
+                calendars.extend(_config_calendars(config, meta_section, kwargs['raise_errors'], kwargs['config_file']))
     return calendars
 
-def _config_calendars(config, meta_section, raise_errors):
+def _config_calendars(config, meta_section, raise_errors, config_file):
     calendars = []
     for section in expand_config_section(config, meta_section):
-        calendars.extend(find_calendars(config_section(config, section), raise_errors=raise_errors))
+        calendars.extend(find_calendars(config_section(config, section), raise_errors=raise_errors, config_file=config_file))
     return calendars
 
 def _section_calendars(ctx, meta_section):
@@ -176,7 +180,7 @@ def _section_calendars(ctx, meta_section):
     config = read_config(ctx.obj['config_file'])
     if not config:
         return []
-    return _config_calendars(config, meta_section, raise_errors=True)
+    return _config_calendars(config, meta_section, raise_errors=True, config_file=ctx.obj['config_file'])
 
 @cli.command()
 @click.pass_context

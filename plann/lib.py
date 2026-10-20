@@ -175,18 +175,28 @@ def _warn_orphaned_overrides(ical):
                 "master, otherwise they are stored as detached occurrence(s).",
                 uid, [str(x.get('SUMMARY', '(no summary)')) for x in components])
 
-def find_calendars(args, raise_errors):
+def find_calendars(args, raise_errors, config_file=None):
     """
     Find calendars from a dict of connection parameters - typically a config
     file section or the command line arguments.  The connection keys are
-    caldav_-prefixed (caldav_url, caldav_user, caldav_pass, ...), optionally
-    accompanied by `features` and the calendar_url/calendar_name filters.
+    caldav_-prefixed (caldav_url, caldav_user, caldav_pass, ...), or plain
+    in a `kind: caldav` section, optionally accompanied by `features` and the
+    calendar_url/calendar_name filters.
 
     Connection parameter extraction (including resolving the URL from a
-    `features` server profile when no caldav_url is given) and the calendar
-    lookup itself are delegated to the caldav library.
+    `features` server profile when no caldav_url is given, and running a
+    password_command) and the calendar lookup itself are delegated to the
+    caldav library.  `config_file` is the file a section came from; caldav
+    checks it before running a password_command from it.
     """
-    conn_params = extract_conn_params_from_section(args)
+    try:
+        conn_params = extract_conn_params_from_section(args, config_file)
+    except ValueError as e:
+        ## a password_command that failed, an unsafe config file, ...
+        if raise_errors:
+            raise
+        logging.error(f"Skipping a config section: {e}")
+        return []
     if not conn_params:
         return []
     calendars = caldav.get_calendars(

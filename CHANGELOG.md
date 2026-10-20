@@ -19,6 +19,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 * `completed!` in `set-task-attribs` moves a recurring task on to its next recurrence, like `edit --complete` does, instead of completing the whole series.
 * Shell tab completion scripts (bash, zsh, fish) now ship with the package.  They work without shell configuration for system-wide installs (and for bash user/venv installs with bash-completion 2.12+); see the README for other setups.  The `make install-completion` targets are gone.
 * icalendar 6.2.0 or newer is required.
+* caldav 3.6 or newer is required.  The config file is now read as caldav 3.6 reads it, so it may also use `kind: caldav` sections with plain keys, `password_command` (a program printing the password) and `password_keyring`, and `~/.config/pycal/calendar.yaml`.
 
 ### Fixed
 

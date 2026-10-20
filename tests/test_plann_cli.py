@@ -569,3 +569,21 @@ def test_mass_interactive_edit_works_on_tasks_fetched_after_editing():
     assert len(saved) == 1
     assert saved[0] is not task
     assert saved[0].icalendar_component['PRIORITY'] == 3
+
+
+def test_config_file_reaches_caldav(tmp_path, monkeypatch):
+    """The config file goes to caldav with each section, also as `~/...`,
+    so a password_command in it can run."""
+    import sys
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_file = tmp_path / "calendar.conf"
+    config_file.write_text(
+        "default:\n"
+        "  caldav_url: https://calendar.example.com/dav\n"
+        f"  caldav_password_command: ['{sys.executable}', '-c', \"print('s3cr3t')\"]\n")
+    config_file.chmod(0o600)
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['-c', '~/calendar.conf', 'list-calendars'])
+    assert 'Traceback' not in res.output, res.output
+    passwords = [c.kwargs.get('password') for c in get_calendars.call_args_list]
+    assert 's3cr3t' in passwords, res.output
