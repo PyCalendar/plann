@@ -587,3 +587,74 @@ def test_config_file_reaches_caldav(tmp_path, monkeypatch):
     assert 'Traceback' not in res.output, res.output
     passwords = [c.kwargs.get('password') for c in get_calendars.call_args_list]
     assert 's3cr3t' in passwords, res.output
+
+
+def test_shared_search_path(tmp_path, monkeypatch):
+    """Without -c, plann reads the file the shared search path finds, here
+    ~/.config/pycal/calendar.yaml."""
+    import sys
+    config_file = tmp_path / ".config" / "pycal" / "calendar.yaml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        "default:\n"
+        "  kind: caldav\n"
+        "  url: https://calendar.example.com/dav\n"
+        f"  password_command: ['{sys.executable}', '-c', \"print('s3cr3t')\"]\n")
+    config_file.chmod(0o600)
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['list-calendars'])
+    passwords = [c.kwargs.get('password') for c in get_calendars.call_args_list]
+    assert 's3cr3t' in passwords, res.output
+
+
+def test_new_config_file_goes_first_on_the_search_path(tmp_path, monkeypatch):
+    from plann.config import resolve_config_file
+    assert resolve_config_file(None) == str(tmp_path / ".config" / "pycal" / "calendar.yaml")
+    assert resolve_config_file("~/my.conf") == str(tmp_path / "my.conf")
+
+
+def test_missing_env_config_file_only_matters_when_read(monkeypatch):
+    """A CALDAV_CONFIG_FILE naming a missing file does not block --help or
+    --skip-config."""
+    monkeypatch.setenv("CALDAV_CONFIG_FILE", "/nonexistent.invalid/calendar.conf")
+    res = CliRunner().invoke(cli, ['list-calendars', '--help'])
+    assert res.exit_code == 0, res.output
+    with patch('caldav.get_calendars', return_value=[]):
+        res = CliRunner().invoke(cli, ['--skip-config', '--caldav-url', 'http://example.invalid/', 'list-calendars'])
+    assert 'does not exist' not in res.output, res.output
+    res = CliRunner().invoke(cli, ['list-calendars'])
+    assert 'does not exist' in res.output
+
+
+def test_configure_writes_beside_a_read_only_system_file(tmp_path, monkeypatch):
+    import calendaring_config.discovery
+
+    from plann.config import resolve_config_file, writable_config_file
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    system_file = etc / "calendar.conf"
+    system_file.write_text("{}")
+    etc.chmod(0o555)
+    try:
+        monkeypatch.setattr(calendaring_config.discovery, "SYSTEM_PATHS", (system_file,))
+        found = resolve_config_file(None)
+        assert found == str(system_file)
+        assert writable_config_file(None, found) == str(tmp_path / ".config" / "pycal" / "calendar.yaml")
+        assert writable_config_file("~/my.conf", str(tmp_path / "my.conf")) == str(tmp_path / "my.conf")
+    finally:
+        etc.chmod(0o755)
+
+
+def test_new_config_file_is_private(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    from plann.config import write_config_file
+    old = os.umask(0o002)
+    try:
+        path = tmp_path / ".config" / "pycal" / "calendar.yaml"
+        write_config_file({"default": {"caldav_pass": "x"}}, str(path))
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700

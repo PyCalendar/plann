@@ -85,7 +85,7 @@ not be up-to-date and may contain features not implemented yet.
 
 * --caldav-url, --caldav-user, --caldav-pass: how to connect to the CalDAV server.  (Fits better into a configuration file)
 * --calendar-url: url to the calendar one wants to use.  A relative URL (path) or a calendar-id is also accepted.
-* --config-file: use a specific configuration file (default: $HOME/.config/calendar.conf)
+* --config-file: use a specific configuration file (default: the first that exists on the search path shared with the caldav library, see below)
 * --config-section: use a specific section from the config file (i.e. to select a different caldav-server to connect to)
 * --icalendar: Write or read icalendar to/from stdout/stdin
 * --nocaldav: don't connect to a caldav server
@@ -137,7 +137,7 @@ The file TASK_MANAGEMENT.md contains some thoughts on how to organize tasks.
 
 ## Configuration file
 
-Configuration file is by default located in $HOME/.config/calendar.conf.  `plann` supports both json and yaml.
+`plann` shares its configuration file with the caldav library and other calendar tools.  Unless `--config-file` names one, it uses the first that exists of `$XDG_CONFIG_HOME/pycal/calendar.yaml` (by default `~/.config/pycal/calendar.yaml`), `~/.config/caldav/calendar.conf`, `~/.config/caldav/calendar.yaml`, `~/.config/caldav/calendar.json`, `~/.config/calendar.conf`, `/etc/calendar.conf` and `/etc/caldav/calendar.conf`; `CALENDARING_CONFIG_FILE` or `CALDAV_CONFIG_FILE` may name another.  `plann configure` creates `~/.config/pycal/calendar.yaml` when none exists.  `plann` supports both json and yaml.
 
 (I considered .ini, but I was told that it's actually not a standard.  I'd like any calendar application to be able to access the file, hence calendar.conf and not plann.conf)
 

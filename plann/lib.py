@@ -175,7 +175,7 @@ def _warn_orphaned_overrides(ical):
                 "master, otherwise they are stored as detached occurrence(s).",
                 uid, [str(x.get('SUMMARY', '(no summary)')) for x in components])
 
-def find_calendars(args, raise_errors, config_file=None):
+def find_calendars(args, raise_errors, config_file=None, section_name="section"):
     """
     Find calendars from a dict of connection parameters - typically a config
     file section or the command line arguments.  The connection keys are
@@ -187,10 +187,11 @@ def find_calendars(args, raise_errors, config_file=None):
     `features` server profile when no caldav_url is given, and running a
     password_command) and the calendar lookup itself are delegated to the
     caldav library.  `config_file` is the file a section came from; caldav
-    checks it before running a password_command from it.
+    checks it before running a password_command from it, and
+    `section_name` names the section in error messages.
     """
     try:
-        conn_params = extract_conn_params_from_section(args, config_file)
+        conn_params = extract_conn_params_from_section(args, config_file, section_name)
     except ValueError as e:
         ## a password_command that failed, an unsafe config file, ...
         if raise_errors:

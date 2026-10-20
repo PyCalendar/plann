@@ -99,8 +99,9 @@ class TestFindCalendars:
         section = {'caldav_url': 'https://calendar.example.com/dav',
                    'caldav_password_command': [sys.executable, '-c', 'raise SystemExit(3)']}
         from plann.lib import find_calendars
-        assert find_calendars(section, raise_errors=False, config_file=str(config_file)) == []
-        assert 'exited with status 3' in caplog.text
+        assert find_calendars(section, raise_errors=False, config_file=str(config_file),
+                              section_name='work') == []
+        assert 'section work exited with status 3' in caplog.text
         with pytest.raises(ValueError, match='status 3'):
             find_calendars(section, raise_errors=True, config_file=str(config_file))
 

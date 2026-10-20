@@ -19,7 +19,8 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 * `completed!` in `set-task-attribs` moves a recurring task on to its next recurrence, like `edit --complete` does, instead of completing the whole series.
 * Shell tab completion scripts (bash, zsh, fish) now ship with the package.  They work without shell configuration for system-wide installs (and for bash user/venv installs with bash-completion 2.12+); see the README for other setups.  The `make install-completion` targets are gone.
 * icalendar 6.2.0 or newer is required.
-* caldav 3.6 or newer is required.  The config file is now read as caldav 3.6 reads it, so it may also use `kind: caldav` sections with plain keys, `password_command` (a program printing the password) and `password_keyring`, and `~/.config/pycal/calendar.yaml`.
+* caldav 3.6 or newer is required.  The config file is now read as caldav 3.6 reads it, so it may also use `kind: caldav` sections with plain keys, `password_command` (a program printing the password) and `password_keyring`.
+* The config file is found on the search path shared with the caldav library and other tools: `~/.config/pycal/calendar.yaml` first, then caldav's paths, `~/.config/calendar.conf` and `/etc`, or the file `CALENDARING_CONFIG_FILE` / `CALDAV_CONFIG_FILE` names.  Before, plann read `~/.config/calendar.conf` only, so with several of these files a different one may be used now.  `plann configure` creates `~/.config/pycal/calendar.yaml` when there is none, or when the file it found cannot be written (one under `/etc`), and makes the file readable by its owner only.
 
 ### Fixed
 

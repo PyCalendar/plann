@@ -48,7 +48,7 @@ It's recommended to rather use a config file.  Those options can be used for spe
 * `--config-file`
 * `--config-section`
 
-The default is to utilize the `default` section under `$HOME/.config/calendar.conf`  Here is an example configuration file:
+The default is to utilize the `default` section of the configuration file, found on the search path shared with the caldav library (`~/.config/pycal/calendar.yaml` first; see the README).  Here is an example configuration file:
 
 ```yaml
 ---

@@ -28,7 +28,7 @@ Take the events from the work calendar and mark up in your default calendar that
 
 ## Sub-task: take out all data in raw ical from the calendar
 
-`plann` without any options will select the default calendar from `.config/calendar.conf`.
+`plann` without any options will select the default calendar from the configuration file (`~/.config/pycal/calendar.yaml` or another file on the shared search path, see the README).
 
 `plann select` without any options will select everything.
 
