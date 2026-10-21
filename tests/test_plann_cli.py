@@ -569,3 +569,16 @@ def test_mass_interactive_edit_works_on_tasks_fetched_after_editing():
     assert len(saved) == 1
     assert saved[0] is not task
     assert saved[0].icalendar_component['PRIORITY'] == 3
+
+
+def test_list_json_and_ics_conflict():
+    res = CliRunner().invoke(cli_mod.list, ['--ics', '--json'], obj={'objs': [_make_todo('a')]})
+    assert res.exit_code != 0
+    assert 'cannot be combined' in res.output
+
+
+def test_list_json():
+    import json
+    res = CliRunner().invoke(cli_mod.list, ['--json'], obj={'objs': [_make_todo('a')]})
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)[0] == 'vcalendar'

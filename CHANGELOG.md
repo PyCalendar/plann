@@ -7,6 +7,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 ### Added
 
+* `list --json` prints the selection as jCal (RFC 7265), the standard JSON representation of iCalendar.  https://github.com/pycalendar/plann/issues/82
 * `plann freebusy-sync`: keeps a copy of the busy time from one set of calendars in another calendar, holding only the time and a fixed summary.  Copies are moved and deleted as the source changes, so it can run from a timer in both directions between a work and a private calendar.  See the user guide.
 
 ### Deprecated
@@ -18,10 +19,11 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 * Completing a task (`edit --complete`, `complete` in the interactive and multi-edit modes, `completed!` in `set-task-attribs`) now also completes its pending child tasks, recursively, and prints a warning for each.  A child has to be done before the parent can be completed.
 * `completed!` in `set-task-attribs` moves a recurring task on to its next recurrence, like `edit --complete` does, instead of completing the whole series.
 * Shell tab completion scripts (bash, zsh, fish) now ship with the package.  They work without shell configuration for system-wide installs (and for bash user/venv installs with bash-completion 2.12+); see the README for other setups.  The `make install-completion` targets are gone.
-* icalendar 6.2.0 or newer is required.
+* icalendar 7.0.0 or newer is required.
 
 ### Fixed
 
+* `list --ics` repeated the VTIMEZONE of every listed object, instead of giving each timezone once.
 * `interactive set-task-attribs` (also run by `interactive manage-tasks`): a task marked `completed!` at one prompt was asked about again at the next one, and answering `completed!` there crashed on the already-completed task.  Regression in v1.2.0.
 * `list-categories` and timewarrior time tracking crashed on a task with more than one CATEGORIES line.  https://github.com/pycalendar/plann/issues/71
 * `{CATEGORIES}` in a `list --template` printed the internal `vCategory([...])` representation instead of a comma-separated list.

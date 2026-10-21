@@ -657,3 +657,65 @@ def test_complete_task_with_non_standard_status_warns():
     assert odd.icalendar_component['STATUS'] == 'WAITING'
     assert child.icalendar_component['STATUS'] == 'NEEDS-ACTION'
     assert warnings == ["Not completing 'task odd': STATUS is WAITING"]
+
+
+def test_list_json():
+    """`list --json` dumps the selection as one jCal (RFC 7265) calendar,
+    like `--ics` does as iCalendar.
+    https://github.com/pycalendar/plann/issues/82"""
+    import json
+    from plann.lib import _list
+    objs = [_todo_with_rels('a', []), _todo_with_rels('b', [])]
+    with patch('plann.lib.click.echo') as echo:
+        _list(objs, as_json=True)
+    jcal = json.loads(echo.call_args.args[0])
+    assert jcal[0] == 'vcalendar'
+    uids = [prop[3] for comp in jcal[2] for prop in comp[1] if prop[0] == 'uid']
+    assert uids == ['a', 'b']
+
+
+def test_list_json_empty():
+    """An empty selection still gives valid json."""
+    import json
+    from plann.lib import _list
+    with patch('plann.lib.click.echo') as echo:
+        _list([], as_json=True)
+    jcal = json.loads(echo.call_args.args[0])
+    assert jcal[0] == 'vcalendar'
+    assert {prop[0] for prop in jcal[1]} >= {'version', 'prodid'}
+    assert jcal[2] == []
+
+
+def _event_in_oslo(uid):
+    from caldav import Event
+    obj = Event()
+    obj.data = (
+        "BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:-//Example Corp.//CalDAV Client//EN\n"
+        "BEGIN:VTIMEZONE\nTZID:Europe/Oslo\n"
+        "BEGIN:STANDARD\nDTSTART:19701025T030000\nTZOFFSETFROM:+0200\nTZOFFSETTO:+0100\n"
+        "RRULE:FREQ=YEARLY;BYMONTH=10;BYDAY=-1SU\nEND:STANDARD\n"
+        "END:VTIMEZONE\n"
+        f"BEGIN:VEVENT\nUID:{uid}\nDTSTART;TZID=Europe/Oslo:20261021T100000\n"
+        f"SUMMARY:event {uid}\nEND:VEVENT\nEND:VCALENDAR"
+    )
+    return obj
+
+
+def test_list_ics_does_not_touch_the_objects():
+    """Merging the selection into one calendar must not modify the
+    (cached) icalendar instance of the first object."""
+    from plann.lib import _list
+    objs = [_event_in_oslo('a'), _event_in_oslo('b')]
+    for as_json in (False, True):
+        with patch('plann.lib.click.echo'):
+            _list(objs, ics=not as_json, as_json=as_json)
+    assert len(objs[0].icalendar_instance.subcomponents) == 2
+
+
+def test_list_json_one_vtimezone_per_tzid():
+    import json
+    from plann.lib import _list
+    with patch('plann.lib.click.echo') as echo:
+        _list([_event_in_oslo('a'), _event_in_oslo('b')], as_json=True)
+    names = [comp[0] for comp in json.loads(echo.call_args.args[0])[2]]
+    assert names == ['vtimezone', 'vevent', 'vevent']

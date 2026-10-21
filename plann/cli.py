@@ -378,16 +378,19 @@ list_type = list
 
 @select.command()
 @click.option('--ics/--no-ics', default=False, help="Output in ics format")
+@click.option('--json/--no-json', 'json_', default=False, help="Output in jCal (RFC 7265) JSON format")
 @click.option('--template', default="{DTSTART:?{DUE:?(date missing)?}?%F %H:%M:%S %Z}: {SUMMARY:?{DESCRIPTION:?(no summary given)?}?}")
 @click.option('--separator', default="\n", help="String to separate the listed items with (defaults to a newline)")
 @click.option('--top-down/--flat-list', help="Check relations and list the relations in a hierarchical way")
 @click.option('--bottom-up/--flat-list', help="List parents (dependencies) in a hierarchical way (cannot be combined with top-down)")
 @click.pass_context
-def list(ctx, ics, template, separator="\n", top_down=False, bottom_up=False):
+def list(ctx, ics, json_, template, separator="\n", top_down=False, bottom_up=False):
     """
     Print out a list of tasks/events/journals
     """
-    return _list(ctx.obj['objs'], ics, template, top_down=top_down, bottom_up=bottom_up, separator=separator)
+    if ics and json_:
+        raise click.UsageError("--ics and --json cannot be combined")
+    return _list(ctx.obj['objs'], ics, as_json=json_, template=template, top_down=top_down, bottom_up=bottom_up, separator=separator)
 
 
 @select.command()
