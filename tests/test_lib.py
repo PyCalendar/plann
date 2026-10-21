@@ -664,6 +664,7 @@ def test_list_json():
     like `--ics` does as iCalendar.
     https://github.com/pycalendar/plann/issues/82"""
     import json
+
     from plann.lib import _list
     objs = [_todo_with_rels('a', []), _todo_with_rels('b', [])]
     with patch('plann.lib.click.echo') as echo:
@@ -677,6 +678,7 @@ def test_list_json():
 def test_list_json_empty():
     """An empty selection still gives valid json."""
     import json
+
     from plann.lib import _list
     with patch('plann.lib.click.echo') as echo:
         _list([], as_json=True)
@@ -714,6 +716,7 @@ def test_list_ics_does_not_touch_the_objects():
 
 def test_list_json_one_vtimezone_per_tzid():
     import json
+
     from plann.lib import _list
     with patch('plann.lib.click.echo') as echo:
         _list([_event_in_oslo('a'), _event_in_oslo('b')], as_json=True)
