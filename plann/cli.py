@@ -18,6 +18,7 @@ plann is a "next generation" reimplementation of calendar-cli
 ## `from plann import ...`
 
 import datetime
+import logging
 import os
 import sys
 
@@ -184,7 +185,15 @@ def _config_file(given):
 def _config_calendars(config, meta_section, raise_errors, config_file):
     calendars = []
     for section in expand_config_section(config, meta_section):
-        calendars.extend(find_calendars(config_section(config, section), raise_errors=raise_errors,
+        try:
+            args = config_section(config, section)
+        except ValueError as e:
+            ## inherits naming a missing section, a cycle, ... - as in find_calendars
+            if raise_errors:
+                raise
+            logging.error(f"Skipping a config section: {e}")
+            continue
+        calendars.extend(find_calendars(args, raise_errors=raise_errors,
                                         config_file=config_file, section_name=section))
     return calendars
 

@@ -605,6 +605,27 @@ def test_config_section_with_inherits(tmp_path):
         ('https://calendar.example.com/dav', 'bob')], res.output
 
 
+def test_config_section_with_broken_inherits_is_skipped(tmp_path, caplog):
+    """A section that inherits from a missing one is logged and skipped
+    like any other broken section, not a traceback."""
+    config_file = tmp_path / "calendar.conf"
+    config_file.write_text(
+        "broken:\n"
+        "  inherits: nosuch\n"
+        "zgood:\n"
+        "  caldav_url: https://calendar.example.com/dav\n")
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['-c', str(config_file), '--config-section', '*', 'list-calendars'])
+    assert isinstance(res.exception, (SystemExit, type(None))), res.exception
+    assert any('nosuch' in r.getMessage() for r in caplog.records if r.levelname == 'ERROR')
+    ## only the broken section is skipped, the one after it is still used
+    assert [c.kwargs.get('url') for c in get_calendars.call_args_list] == [
+        'https://calendar.example.com/dav'], res.output
+    res = CliRunner().invoke(cli, ['-c', str(config_file), '--config-section', 'broken', '--raise-errors',
+                                   'list-calendars'])
+    assert isinstance(res.exception, ValueError), res.exception
+
+
 def test_shared_search_path(tmp_path, monkeypatch):
     """Without -c, plann reads the file the shared search path finds, here
     ~/.config/pycal/calendar.yaml."""
