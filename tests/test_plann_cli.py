@@ -589,6 +589,22 @@ def test_config_file_reaches_caldav(tmp_path, monkeypatch):
     assert 's3cr3t' in passwords, res.output
 
 
+def test_config_section_with_inherits(tmp_path):
+    """A section that inherits from another reaches caldav merged, rather
+    than being skipped as "not a leaf"."""
+    config_file = tmp_path / "calendar.conf"
+    config_file.write_text(
+        "base:\n"
+        "  caldav_url: https://calendar.example.com/dav\n"
+        "default:\n"
+        "  inherits: base\n"
+        "  caldav_user: bob\n")
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['-c', str(config_file), 'list-calendars'])
+    assert [(c.kwargs.get('url'), c.kwargs.get('username')) for c in get_calendars.call_args_list] == [
+        ('https://calendar.example.com/dav', 'bob')], res.output
+
+
 def test_shared_search_path(tmp_path, monkeypatch):
     """Without -c, plann reads the file the shared search path finds, here
     ~/.config/pycal/calendar.yaml."""
