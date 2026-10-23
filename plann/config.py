@@ -4,6 +4,8 @@ import os
 import time
 from getpass import getpass
 
+import calendaring_config
+
 ## The config handling logic originated in plann and has been adopted by the
 ## caldav library - use the caldav implementation rather than carrying a copy.
 ## (The redundant aliases mark config_section and expand_config_section as
@@ -132,10 +134,7 @@ def interactive_config(config, config_file, config_section='default', allow_use=
                         del config[section]
                     section = new_section
                 try:
-                    if os.path.isfile(config_file):
-                        os.rename(config_file, f"{config_file}.{int(time.time())}.bak")
-                    with open(config_file, 'w') as outfile:
-                        json.dump(config, outfile, indent=4)
+                    write_config_file(config, config_file)
                 except Exception as e:
                     print(e)
                 else:
@@ -145,6 +144,41 @@ def interactive_config(config, config_file, config_section='default', allow_use=
     if config_section == 'default' and section != 'default':
         config['default'] = config[section]
     return config
+
+def write_config_file(config, config_file):
+    """Write `config` to `config_file`, keeping a backup of the old one.  The
+    file may hold a password, so it is created readable by its owner only -
+    and caldav will only run a password_command from a file nobody else can
+    write to."""
+    if os.path.isfile(config_file):
+        os.rename(config_file, f"{config_file}.{int(time.time())}.bak")
+    os.makedirs(os.path.dirname(config_file) or '.', mode=0o700, exist_ok=True)
+    fd = os.open(config_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, 'w') as outfile:
+        json.dump(config, outfile, indent=4)
+
+def writable_config_file(given, found):
+    """Where `plann configure` saves: the file it read (`found`), unless
+    that was picked from the search path and cannot be written - such as
+    /etc/calendar.conf - in which case a new file goes first on the path."""
+    if given:
+        return found
+    ## saving renames the old file to a backup, so the directory must be writable
+    directory = os.path.dirname(found) or '.'
+    if not os.path.exists(directory) or os.access(directory, os.W_OK):
+        return found
+    return str(calendaring_config.search_path()[0])
+
+def resolve_config_file(config_file):
+    """The config file to use: the one given (with ~ expanded), else the
+    first that exists on the search path shared with the caldav library and
+    other tools (calendaring-config decides it, also from
+    CALENDARING_CONFIG_FILE / CALDAV_CONFIG_FILE), else the first path on
+    it, where `plann configure` creates a new one."""
+    if config_file:
+        return os.path.expanduser(config_file)
+    found = calendaring_config.find_config_file()
+    return str(found if found else calendaring_config.search_path()[0])
 
 def read_config(fn, interactive_error=False):
     """

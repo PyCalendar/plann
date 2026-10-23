@@ -586,3 +586,129 @@ def test_edit_sets_both_dtstart_and_due():
         comp = obj.icalendar_component
         assert comp['DTSTART'].dt == datetime(2025, 1, 10, 10).astimezone()
         assert comp['DUE'].dt == datetime(2025, 1, 10, 12).astimezone()
+
+
+def test_config_file_reaches_caldav(tmp_path, monkeypatch):
+    """The config file goes to caldav with each section, also as `~/...`,
+    so a password_command in it can run."""
+    import sys
+    monkeypatch.setenv("HOME", str(tmp_path))
+    config_file = tmp_path / "calendar.conf"
+    config_file.write_text(
+        "default:\n"
+        "  caldav_url: https://calendar.example.com/dav\n"
+        f"  caldav_password_command: ['{sys.executable}', '-c', \"print('s3cr3t')\"]\n")
+    config_file.chmod(0o600)
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['-c', '~/calendar.conf', 'list-calendars'])
+    assert 'Traceback' not in res.output, res.output
+    passwords = [c.kwargs.get('password') for c in get_calendars.call_args_list]
+    assert 's3cr3t' in passwords, res.output
+
+
+def test_config_section_with_inherits(tmp_path):
+    """A section that inherits from another reaches caldav merged, rather
+    than being skipped as "not a leaf"."""
+    config_file = tmp_path / "calendar.conf"
+    config_file.write_text(
+        "base:\n"
+        "  caldav_url: https://calendar.example.com/dav\n"
+        "default:\n"
+        "  inherits: base\n"
+        "  caldav_user: bob\n")
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['-c', str(config_file), 'list-calendars'])
+    assert [(c.kwargs.get('url'), c.kwargs.get('username')) for c in get_calendars.call_args_list] == [
+        ('https://calendar.example.com/dav', 'bob')], res.output
+
+
+def test_config_section_with_broken_inherits_is_skipped(tmp_path, caplog):
+    """A section that inherits from a missing one is logged and skipped
+    like any other broken section, not a traceback."""
+    config_file = tmp_path / "calendar.conf"
+    config_file.write_text(
+        "broken:\n"
+        "  inherits: nosuch\n"
+        "zgood:\n"
+        "  caldav_url: https://calendar.example.com/dav\n")
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['-c', str(config_file), '--config-section', '*', 'list-calendars'])
+    assert isinstance(res.exception, (SystemExit, type(None))), res.exception
+    assert any('nosuch' in r.getMessage() for r in caplog.records if r.levelname == 'ERROR')
+    ## only the broken section is skipped, the one after it is still used
+    assert [c.kwargs.get('url') for c in get_calendars.call_args_list] == [
+        'https://calendar.example.com/dav'], res.output
+    res = CliRunner().invoke(cli, ['-c', str(config_file), '--config-section', 'broken', '--raise-errors',
+                                   'list-calendars'])
+    assert isinstance(res.exception, ValueError), res.exception
+
+
+def test_shared_search_path(tmp_path, monkeypatch):
+    """Without -c, plann reads the file the shared search path finds, here
+    ~/.config/pycal/calendar.yaml."""
+    import sys
+    config_file = tmp_path / ".config" / "pycal" / "calendar.yaml"
+    config_file.parent.mkdir(parents=True)
+    config_file.write_text(
+        "default:\n"
+        "  kind: caldav\n"
+        "  url: https://calendar.example.com/dav\n"
+        f"  password_command: ['{sys.executable}', '-c', \"print('s3cr3t')\"]\n")
+    config_file.chmod(0o600)
+    with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+        res = CliRunner().invoke(cli, ['list-calendars'])
+    passwords = [c.kwargs.get('password') for c in get_calendars.call_args_list]
+    assert 's3cr3t' in passwords, res.output
+
+
+def test_new_config_file_goes_first_on_the_search_path(tmp_path, monkeypatch):
+    from plann.config import resolve_config_file
+    assert resolve_config_file(None) == str(tmp_path / ".config" / "pycal" / "calendar.yaml")
+    assert resolve_config_file("~/my.conf") == str(tmp_path / "my.conf")
+
+
+def test_missing_env_config_file_only_matters_when_read(monkeypatch):
+    """A CALDAV_CONFIG_FILE naming a missing file does not block --help or
+    --skip-config."""
+    monkeypatch.setenv("CALDAV_CONFIG_FILE", "/nonexistent.invalid/calendar.conf")
+    res = CliRunner().invoke(cli, ['list-calendars', '--help'])
+    assert res.exit_code == 0, res.output
+    with patch('caldav.get_calendars', return_value=[]):
+        res = CliRunner().invoke(cli, ['--skip-config', '--caldav-url', 'http://example.invalid/', 'list-calendars'])
+    assert 'does not exist' not in res.output, res.output
+    res = CliRunner().invoke(cli, ['list-calendars'])
+    assert 'does not exist' in res.output
+
+
+def test_configure_writes_beside_a_read_only_system_file(tmp_path, monkeypatch):
+    import calendaring_config.discovery
+
+    from plann.config import resolve_config_file, writable_config_file
+    etc = tmp_path / "etc"
+    etc.mkdir()
+    system_file = etc / "calendar.conf"
+    system_file.write_text("{}")
+    etc.chmod(0o555)
+    try:
+        monkeypatch.setattr(calendaring_config.discovery, "SYSTEM_PATHS", (system_file,))
+        found = resolve_config_file(None)
+        assert found == str(system_file)
+        assert writable_config_file(None, found) == str(tmp_path / ".config" / "pycal" / "calendar.yaml")
+        assert writable_config_file("~/my.conf", str(tmp_path / "my.conf")) == str(tmp_path / "my.conf")
+    finally:
+        etc.chmod(0o755)
+
+
+def test_new_config_file_is_private(tmp_path, monkeypatch):
+    import os
+    import stat
+
+    from plann.config import write_config_file
+    old = os.umask(0o002)
+    try:
+        path = tmp_path / ".config" / "pycal" / "calendar.yaml"
+        write_config_file({"default": {"caldav_pass": "x"}}, str(path))
+    finally:
+        os.umask(old)
+    assert stat.S_IMODE(path.stat().st_mode) == 0o600
+    assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700

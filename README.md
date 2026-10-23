@@ -85,7 +85,7 @@ not be up-to-date and may contain features not implemented yet.
 
 * --caldav-url, --caldav-user, --caldav-pass: how to connect to the CalDAV server.  (Fits better into a configuration file)
 * --calendar-url: url to the calendar one wants to use.  A relative URL (path) or a calendar-id is also accepted.
-* --config-file: use a specific configuration file (default: $HOME/.config/calendar.conf)
+* --config-file: use a specific configuration file (default: the first that exists on the search path shared with the caldav library, see below)
 * --config-section: use a specific section from the config file (i.e. to select a different caldav-server to connect to)
 * --icalendar: Write or read icalendar to/from stdout/stdin
 * --nocaldav: don't connect to a caldav server
@@ -137,7 +137,7 @@ The file TASK_MANAGEMENT.md contains some thoughts on how to organize tasks.
 
 ## Configuration file
 
-Configuration file is by default located in $HOME/.config/calendar.conf.  `plann` supports both json and yaml.
+`plann` shares its configuration file with the caldav library and other calendar tools.  Unless `--config-file` names one, it uses the first that exists of `$XDG_CONFIG_HOME/pycal/calendar.yaml` (by default `~/.config/pycal/calendar.yaml`), `~/.config/caldav/calendar.conf`, `~/.config/caldav/calendar.yaml`, `~/.config/caldav/calendar.json`, `~/.config/calendar.conf`, `/etc/calendar.conf` and `/etc/caldav/calendar.conf`; `CALENDARING_CONFIG_FILE` or `CALDAV_CONFIG_FILE` may name another.  `plann configure` creates `~/.config/pycal/calendar.yaml` when none exists.  `plann` supports both json and yaml.
 
 (I considered .ini, but I was told that it's actually not a standard.  I'd like any calendar application to be able to access the file, hence calendar.conf and not plann.conf)
 
@@ -165,7 +165,16 @@ The connection settings (`caldav_url`, `caldav_user`, `caldav_pass`, `caldav_pro
 }
 ```
 
-Only the connection settings are expanded; other keys, such as `calendar_url` and `calendar_name`, are used as written.
+Instead of a password in the file or the environment, `caldav_password_command` may name a program (as a list of the program and its arguments) whose output is the password, and `caldav_password_keyring` a service name to look up in the system keyring:
+
+```yaml
+default:
+  caldav_url: http://foo.bar.example.com/caldav/
+  caldav_user: luser
+  caldav_password_command: [pass, show, dav/work]
+```
+
+The command is only run when the config file is writable by nobody but its owner (`chmod 600`); `plann configure` writes the file with your umask, so check it after configuring.  A section may also be written as `kind: caldav` with plain keys (`url`, `username`, `password_command`, ...).  The file format is shared with the caldav library and other tools, and is specified in [calendaring-config](https://github.com/pycalendar/calendaring-config/blob/main/docs/format.md).
 
 A `features` key may be given to enable server-specific compatibility workarounds, referring to a server profile in the caldav library's `compatibility_hints` module (e.g. `"features": "ecloud"`).  For servers with a known profile, `caldav_url` may even be omitted - the caldav library will derive the URL from the profile.
 

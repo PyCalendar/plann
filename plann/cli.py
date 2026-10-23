@@ -18,7 +18,7 @@ plann is a "next generation" reimplementation of calendar-cli
 ## `from plann import ...`
 
 import datetime
-import os
+import logging
 import sys
 
 import caldav
@@ -39,7 +39,14 @@ from plann.commands import (
     _split_high_pri_tasks,
     _split_huge_tasks,
 )
-from plann.config import config_section, expand_config_section, interactive_config, read_config
+from plann.config import (
+    config_section,
+    expand_config_section,
+    interactive_config,
+    read_config,
+    resolve_config_file,
+    writable_config_file,
+)
 from plann.interactive import _abort
 from plann.lib import (
     COMMA_LIST_ATTRS,
@@ -115,7 +122,7 @@ class _LazyCalendars:
 @click.option('--show-native-timezone/--show-local-timezone', help="Show timestamps as they are in the calendar (default is to convert to local timezone)")
 @click.option('--implicit-timezone', help="Timestamps entered without timezone is assumed to be in this timezone (default: local/system tz)")
 @click.option('--store-timezone', help="Timestamps saved to the calendar should be converted to this timezone (default: same as --implicit-timezone)")
-@click.option('-c', '--config-file', default=f"{os.environ.get('HOME')}/.config/calendar.conf")
+@click.option('-c', '--config-file', help="Configuration file (default: the first that exists of ~/.config/pycal/calendar.yaml, ~/.config/caldav/calendar.conf and the other paths shared with the caldav library)")
 @click.option('--skip-config/--read-config', help="Skip reading the config file")
 @click.option('--config-section', default=["default"], multiple=True)
 @click.option('--caldav-url', help="Full URL to the caldav server", metavar='URL')
@@ -158,25 +165,45 @@ def _discover_calendars(kwargs):
     --skip-config is given, from every selected config-file section."""
     calendars = find_calendars(kwargs, kwargs['raise_errors'])
     if not kwargs['skip_config']:
-        config = read_config(kwargs['config_file'])
+        config_file = _config_file(kwargs['config_file'])
+        config = read_config(config_file)
         if config:
             for meta_section in kwargs['config_section']:
-                calendars.extend(_config_calendars(config, meta_section, kwargs['raise_errors']))
+                calendars.extend(_config_calendars(config, meta_section, kwargs['raise_errors'], config_file))
     return calendars
 
-def _config_calendars(config, meta_section, raise_errors):
+def _config_file(given):
+    """The config file to read, looked up only when it is needed, so that
+    --help and --skip-config work whatever CALDAV_CONFIG_FILE says.  caldav
+    checks this file before running a password_command from it."""
+    try:
+        return resolve_config_file(given)
+    except ValueError as e:  ## CALDAV_CONFIG_FILE naming a file that is not there
+        raise click.UsageError(str(e)) from e
+
+def _config_calendars(config, meta_section, raise_errors, config_file):
     calendars = []
     for section in expand_config_section(config, meta_section):
-        calendars.extend(find_calendars(config_section(config, section), raise_errors=raise_errors))
+        try:
+            args = config_section(config, section)
+        except ValueError as e:
+            ## inherits naming a missing section, a cycle, ... - as in find_calendars
+            if raise_errors:
+                raise
+            logging.error(f"Skipping a config section: {e}")
+            continue
+        calendars.extend(find_calendars(args, raise_errors=raise_errors,
+                                        config_file=config_file, section_name=section))
     return calendars
 
 def _section_calendars(ctx, meta_section):
     """Find the calendars of one config-file section, independent of the
     sections selected with --config-section.  Errors are raised."""
-    config = read_config(ctx.obj['config_file'])
+    config_file = _config_file(ctx.obj['config_file'])
+    config = read_config(config_file)
     if not config:
         return []
-    return _config_calendars(config, meta_section, raise_errors=True)
+    return _config_calendars(config, meta_section, raise_errors=True, config_file=config_file)
 
 @cli.command()
 @click.pass_context
@@ -201,11 +228,11 @@ def configure(ctx):
 
     Prompts for connection parameters and writes them to the config file.
     """
-    config_file = ctx.obj['config_file']
+    config_file = _config_file(ctx.obj['config_file'])
     sections = ctx.obj['config_section']
     section = sections[0] if sections else 'default'
     config = read_config(config_file, interactive_error=True) or {}
-    interactive_config(config, config_file, config_section=section)
+    interactive_config(config, writable_config_file(ctx.obj['config_file'], config_file), config_section=section)
 
 def _set_attr_options_(func, verb, desc=""):
     """

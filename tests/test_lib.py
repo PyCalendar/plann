@@ -74,6 +74,38 @@ class TestFindCalendars:
             'features': self.features})
         assert calendars == [cal]
 
+    def test_password_command(self, tmp_path):
+        """caldav runs a password_command only with the config file it came
+        from, so plann has to pass that file along."""
+        import sys
+        config_file = tmp_path / "calendar.conf"
+        config_file.write_text("")
+        config_file.chmod(0o600)
+        section = {'caldav_url': 'https://calendar.example.com/dav',
+                   'caldav_password_command': [sys.executable, '-c', "print('s3cr3t')"]}
+        from plann.lib import find_calendars
+        with patch('caldav.get_calendars', return_value=[]) as get_calendars:
+            find_calendars(section, raise_errors=True, config_file=str(config_file))
+        assert get_calendars.call_args.kwargs['password'] == 's3cr3t'
+
+    def test_failing_password_command(self, tmp_path, caplog):
+        """A failing command is reported, and only stops discovery under
+        --raise-errors."""
+        import sys
+
+        import pytest
+        config_file = tmp_path / "calendar.conf"
+        config_file.write_text("")
+        config_file.chmod(0o600)
+        section = {'caldav_url': 'https://calendar.example.com/dav',
+                   'caldav_password_command': [sys.executable, '-c', 'raise SystemExit(3)']}
+        from plann.lib import find_calendars
+        assert find_calendars(section, raise_errors=False, config_file=str(config_file),
+                              section_name='work') == []
+        assert 'section work exited with status 3' in caplog.text
+        with pytest.raises(ValueError, match='status 3'):
+            find_calendars(section, raise_errors=True, config_file=str(config_file))
+
     def test_no_connection_params(self):
         calendars, cal = self._find_calendars({})
         assert calendars == []
