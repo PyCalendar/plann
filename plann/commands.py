@@ -310,7 +310,8 @@ def _edit(ctx, cancel=None, interactive_ical=False, interactive_relations=False,
         comp = obj.icalendar_component
         if kwargs.get('pdb'):
             _pdb_edit(obj)
-        for arg in ctx.obj['set_args']:
+        ## DTSTART last: setting DUE/DTEND moves DTSTART along with it
+        for arg in sorted(ctx.obj['set_args'], key=lambda a: a.lower() == 'dtstart'):
             _set_something(obj, arg, ctx.obj['set_args'][arg])
         for canonical, tokens in add_args:
             _add_comma_list(obj, canonical, tokens)

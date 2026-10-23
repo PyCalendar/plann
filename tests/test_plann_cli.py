@@ -569,3 +569,20 @@ def test_mass_interactive_edit_works_on_tasks_fetched_after_editing():
     assert len(saved) == 1
     assert saved[0] is not task
     assert saved[0].icalendar_component['PRIORITY'] == 3
+
+
+def test_edit_sets_both_dtstart_and_due():
+    """`edit --set-dtstart X --set-due Y` ends up with exactly X and Y, in
+    whatever order the options come: moving DUE used to shift the DTSTART
+    that had just been set by the old duration"""
+    dtstart = '2025-01-10 10:00:00'
+    due = '2025-01-10 12:00:00'
+    for kwargs in ({'set_dtstart': dtstart, 'set_due': due}, {'set_due': due, 'set_dtstart': dtstart}):
+        obj = _make_todo('t', dtstart=True, due=True)
+        ctx = _FakeCtx()
+        ctx.obj['objs'] = [obj]
+        with patch.object(Todo, 'save'):
+            commands_mod._edit(ctx, **kwargs)
+        comp = obj.icalendar_component
+        assert comp['DTSTART'].dt == datetime(2025, 1, 10, 10).astimezone()
+        assert comp['DUE'].dt == datetime(2025, 1, 10, 12).astimezone()

@@ -555,6 +555,9 @@ def _complete(obj, handle_rrule=True, rrule_mode='safe', err_callback=print, cac
     for child in _relships_by_type(obj, 'CHILD', cache=cache).get('CHILD', []):
         if str(child.icalendar_component['UID']) in _seen:
             continue
+        if not isinstance(child, caldav.Todo):
+            ## an event or journal has nothing to complete
+            continue
         try:
             if not child.is_pending():
                 continue
@@ -615,7 +618,7 @@ def _set_something(obj, arg, value):
             obj.set_relation(reltype=arg, other=val)
     elif arg == 'duration':
         obj.set_duration(value)
-    elif arg in ('due', 'dtend'): ## TODO: dtstart!
+    elif arg in ('due', 'dtend'): ## moves DTSTART too - _edit sets DTSTART after this
         getattr(obj, f"set_{arg}")(value, move_dtstart=True, check_dependent=True)
     elif _is_comma_list_attr(arg):
         ## a list (already processed by _process_set_arg) or a raw comma string
