@@ -712,3 +712,16 @@ def test_new_config_file_is_private(tmp_path, monkeypatch):
         os.umask(old)
     assert stat.S_IMODE(path.stat().st_mode) == 0o600
     assert stat.S_IMODE(path.parent.stat().st_mode) == 0o700
+
+
+def test_list_json_and_ics_conflict():
+    res = CliRunner().invoke(cli_mod.list, ['--ics', '--json'], obj={'objs': [_make_todo('a')]})
+    assert res.exit_code != 0
+    assert 'cannot be combined' in res.output
+
+
+def test_list_json():
+    import json
+    res = CliRunner().invoke(cli_mod.list, ['--json'], obj={'objs': [_make_todo('a')]})
+    assert res.exit_code == 0, res.output
+    assert json.loads(res.output)[0] == 'vcalendar'

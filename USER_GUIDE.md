@@ -109,7 +109,13 @@ Some calendar server implementations require  `--todo` or `--event` to always be
 
 ### Listing objects
 
-Events can either be output as ics, or through a template.
+Events can either be output as ics (`list --ics`), as json (`list --json`), or through a template.
+
+The json output is jCal, the standard JSON representation of iCalendar (RFC 7265).  It holds everything the ics output holds, and is easier for scripts (or AI agents) to work on than template output:
+
+```
+plann select --event --start=today --end=+7d list --json
+```
 
 The templating engine is built on top of the python `string.format()`.  To learn the basics of `string.format()`, w3schools has some nice interactive thing on the web, https://www.w3schools.com/python/ref_string_format.asp
 

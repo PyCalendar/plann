@@ -648,7 +648,7 @@ def _set_something(obj, arg, value):
 ## TODO: should be rewritten a bit, we should have a create_list method that does not call on click.echo directly
 ## let the caller decide if click is to be used or not.
 ## Use the yield method to avoid having to generate the full list prior to printing to screen
-def _list(objs, ics=False, template="{DTSTART:?{DUE:?(date missing)?}?%F %H:%M:%S %Z}: {SUMMARY:?{DESCRIPTION:?(no summary given)?}?}", top_down=False, bottom_up=False, indent=0, echo=True, uids=None, filter=lambda obj: True, separator="\n", cache=None):
+def _list(objs, ics=False, as_json=False, template="{DTSTART:?{DUE:?(date missing)?}?%F %H:%M:%S %Z}: {SUMMARY:?{DESCRIPTION:?(no summary given)?}?}", top_down=False, bottom_up=False, indent=0, echo=True, uids=None, filter=lambda obj: True, separator="\n", cache=None):
     """
     Actual implementation of list
 
@@ -661,14 +661,24 @@ def _list(objs, ics=False, template="{DTSTART:?{DUE:?(date missing)?}?%F %H:%M:%
     ## task is not re-fetched from the server for every edge it touches (E3)
     if cache is None and (top_down or bottom_up):
         cache = _RelativeCache()
-    if ics:
+    if ics or as_json:
         accepted = [obj for obj in objs if filter(obj)]
-        if not accepted:
+        ## a script parsing the json should get an empty calendar, not nothing
+        if not accepted and not as_json:
             return
-        icalendar = accepted[0].icalendar_instance
-        for obj in accepted[1:]:
-            icalendar.subcomponents.extend(obj.icalendar_instance.subcomponents)
-        click.echo(icalendar.to_ical())
+        ## a fresh calendar, the objects' (cached) instances are not to be touched
+        cal = icalendar.Calendar()
+        cal.add('VERSION', '2.0')
+        cal.add('PRODID', '-//plann//list//EN')
+        tzids = set()
+        for obj in accepted:
+            for comp in obj.icalendar_instance.subcomponents:
+                if comp.name == 'VTIMEZONE':
+                    if comp['TZID'] in tzids:
+                        continue
+                    tzids.add(comp['TZID'])
+                cal.add_component(comp)
+        click.echo(cal.to_json() if as_json else cal.to_ical())
         return
     if isinstance(template, str):
         template=Template(template)
