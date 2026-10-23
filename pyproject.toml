@@ -25,7 +25,7 @@ classifiers = [
 keywords = ["caldav", "calendar", "cli", "todo", "planning"]
 dependencies = [
     "caldav>=3.6.0",
-    "calendaring-config>=0.4",
+    "calendaring-config>=0.5",
     "Click",
     "PyYAML",
     "sortedcontainers",
