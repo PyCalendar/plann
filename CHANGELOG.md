@@ -3,33 +3,33 @@
 The format of this file is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## v1.3.0 - 2026-10-23
 
 ### Added
 
-* `list --json` prints the selection as jCal (RFC 7265), the standard JSON representation of iCalendar.  https://github.com/pycalendar/plann/issues/82
-* `plann freebusy-sync`: keeps a copy of the busy time from one set of calendars in another calendar, holding only the time and a fixed summary.  Copies are moved and deleted as the source changes, so it can run from a timer in both directions between a work and a private calendar.  See the user guide.
+* `list --json` prints the selection as jCal (RFC 7265), the standard JSON representation of iCalendar.  https://github.com/pycalendar/plann/issues/82  https://github.com/pycalendar/plann/pull/83
+* `plann freebusy-sync`: keeps a copy of the busy time from one set of calendars in another calendar, holding only the time and a fixed summary.  Copies are moved and deleted as the source changes, so it can run from a timer in both directions between a work and a private calendar.  See the user guide.  https://github.com/pycalendar/plann/pull/70
 
 ### Deprecated
 
-* `select --freebusyhack`, superseded by `freebusy-sync`.  It keeps the UID of the original, and it leaves the summary, description and attendees of recurrence exceptions in place.
+* `select --freebusyhack`, superseded by `freebusy-sync`.  It keeps the UID of the original, and it leaves the summary, description and attendees of recurrence exceptions in place.  https://github.com/pycalendar/plann/pull/70
 
 ### Changed
 
-* Completing a task (`edit --complete`, `complete` in the interactive and multi-edit modes, `completed!` in `set-task-attribs`) now also completes its pending child tasks, recursively, and prints a warning for each.  A child has to be done before the parent can be completed.
-* `completed!` in `set-task-attribs` moves a recurring task on to its next recurrence, like `edit --complete` does, instead of completing the whole series.
-* Shell tab completion scripts (bash, zsh, fish) now ship with the package.  They work without shell configuration for system-wide installs (and for bash user/venv installs with bash-completion 2.12+); see the README for other setups.  The `make install-completion` targets are gone.
-* icalendar 7.0.0 or newer is required.
-* caldav 3.6 or newer is required.  The config file is now read as caldav 3.6 reads it, so it may also use `kind: caldav` sections with plain keys, `password_command` (a program printing the password) and `password_keyring`.
-* The config file is found on the search path shared with the caldav library and other tools: `~/.config/pycal/calendar.yaml` first, then caldav's paths, `~/.config/calendar.conf` and `/etc`, or the file `CALENDARING_CONFIG_FILE` / `CALDAV_CONFIG_FILE` names.  Before, plann read `~/.config/calendar.conf` only, so with several of these files a different one may be used now.  `plann configure` creates `~/.config/pycal/calendar.yaml` when there is none, or when the file it found cannot be written (one under `/etc`), and makes the file readable by its owner only.
+* Completing a task (`edit --complete`, `complete` in the interactive and multi-edit modes, `completed!` in `set-task-attribs`) now also completes its pending child tasks, recursively, and prints a warning for each.  A child has to be done before the parent can be completed.  https://github.com/pycalendar/plann/pull/76
+* `completed!` in `set-task-attribs` moves a recurring task on to its next recurrence, like `edit --complete` does, instead of completing the whole series.  https://github.com/pycalendar/plann/pull/76
+* Shell tab completion scripts (bash, zsh, fish) now ship with the package.  They work without shell configuration for system-wide installs (and for bash user/venv installs with bash-completion 2.12+); see the README for other setups.  The `make install-completion` targets are gone.  https://github.com/pycalendar/plann/pull/63
+* icalendar 7.0.0 or newer is required.  https://github.com/pycalendar/plann/pull/83
+* caldav 3.6 or newer is required, and `calendaring-config` 0.5 or newer is a new dependency.  The config file is now read as caldav 3.6 reads it, so it may also use `kind: caldav` sections with plain keys, `password_command` (a program printing the password) and `password_keyring`.  A section whose `inherits` names a missing section, or forms a loop, is now skipped with a warning (an error with `--raise-errors`); before, the broken `inherits` was ignored and the section still used.  https://github.com/pycalendar/plann/pull/81
+* The config file is found on the search path shared with the caldav library and other tools: `~/.config/pycal/calendar.yaml` first, then caldav's paths, `~/.config/calendar.conf` and `/etc`, or the file `CALENDARING_CONFIG_FILE` / `CALDAV_CONFIG_FILE` names.  Before, plann read `~/.config/calendar.conf` only, so with several of these files a different one may be used now.  `plann configure` creates `~/.config/pycal/calendar.yaml` when there is none, or when the file it found cannot be written (one under `/etc`), and makes the file readable by its owner only.  https://github.com/pycalendar/plann/pull/81
 
 ### Fixed
 
-* `list --ics` repeated the VTIMEZONE of every listed object, instead of giving each timezone once.
-* `interactive set-task-attribs` (also run by `interactive manage-tasks`): a task marked `completed!` at one prompt was asked about again at the next one, and answering `completed!` there crashed on the already-completed task.  Regression in v1.2.0.
-* `list-categories` and timewarrior time tracking crashed on a task with more than one CATEGORIES line.  https://github.com/pycalendar/plann/issues/71
-* `{CATEGORIES}` in a `list --template` printed the internal `vCategory([...])` representation instead of a comma-separated list.
-* `edit --set-dtstart X --set-due Y` did not end up with DTSTART at X: moving DUE kept the duration and shifted the DTSTART that had just been set.
+* `list --ics` repeated the VTIMEZONE of every listed object, instead of giving each timezone once.  https://github.com/pycalendar/plann/pull/83
+* `interactive set-task-attribs` (also run by `interactive manage-tasks`): a task marked `completed!` at one prompt was asked about again at the next one, and answering `completed!` there crashed on the already-completed task.  Regression in v1.2.0.  https://github.com/pycalendar/plann/pull/63
+* `list-categories` and timewarrior time tracking crashed on a task with more than one CATEGORIES line.  https://github.com/pycalendar/plann/issues/71  https://github.com/pycalendar/plann/pull/72
+* `{CATEGORIES}` in a `list --template` printed the internal `vCategory([...])` representation instead of a comma-separated list.  https://github.com/pycalendar/plann/pull/77
+* `edit --set-dtstart X --set-due Y` did not end up with DTSTART at X: moving DUE kept the duration and shifted the DTSTART that had just been set.  https://github.com/pycalendar/plann/pull/80
 
 ## v1.2.0 - 2026-09-16
 
