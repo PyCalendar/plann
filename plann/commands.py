@@ -511,6 +511,8 @@ def _dismiss_panic(ctx, hours_per_day, lookahead='60d'):
         click.echo("No need to panic :-)")
         return
 
+    ## a task may be postponed through its child before its own turn
+    postponed = set()
     for priority in range(9,0,-1):
         first_low_pri_tasks = []
         other_low_pri_tasks = []
@@ -560,13 +562,13 @@ def _dismiss_panic(ctx, hours_per_day, lookahead='60d'):
             ## TODO: since tasks with different priority may be affected, it's needed to restart the algorithm
             _mass_interactive_edit([x['obj'] for x in first_low_pri_tasks], default=f"postpone {default_procrastination_time}")
         else:
-            _procrastinate([x['obj'] for x in first_low_pri_tasks], procrastination_time,  check_dependent='interactive', err_callback=click.echo, confirm_callback=click.confirm)
+            _procrastinate([x['obj'] for x in first_low_pri_tasks], procrastination_time,  check_dependent='interactive', err_callback=click.echo, confirm_callback=click.confirm, postponed=postponed)
 
         if other_low_pri_tasks:
-            click.echo(f"There are {len(other_low_pri_tasks)} later pri>={priority} tasks selected which should maybe probably be considered to be postponed a bit as well")
+            click.echo(f"There are {len(other_low_pri_tasks)} later pri>={priority} tasks selected which should maybe be considered to be postponed a bit as well")
             procrastination_time = click.prompt("Push the due-date for those with ...", default='0h')
             if procrastination_time not in ('0', '0h', '0m', '0d', 0):
-                _procrastinate([x['obj'] for x in other_low_pri_tasks], procrastination_time, check_dependent='interactive', err_callback=click.echo, confirm_callback=click.confirm)
+                _procrastinate([x['obj'] for x in other_low_pri_tasks], procrastination_time, check_dependent='interactive', err_callback=click.echo, confirm_callback=click.confirm, postponed=postponed)
 
 def _split_huge_tasks(ctx, threshold='4h', max_lookahead='60d', limit_lookahead=640):
     _select(ctx=ctx, todo=True, end=f"+{max_lookahead}", limit=limit_lookahead, sort_key=['{DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}', '{PRIORITY:?0?}'])

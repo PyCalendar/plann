@@ -3,6 +3,12 @@
 The format of this file is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## Unreleased
+
+### Fixed
+
+* `interactive manage-tasks`: a parent task postponed together with its child could be postponed once more in its own turn, and with caldav 3.6 this crashed with a "412 Precondition Failed" error.  It is now skipped, with a note.  A task changed on the server in the meantime is reloaded before it is postponed.
+
 ## v1.3.0 - 2026-10-23
 
 ### Added

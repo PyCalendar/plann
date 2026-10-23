@@ -17,6 +17,7 @@ import caldav
 import click  ## TODO - this should be removed, eventually
 import icalendar
 from caldav.config import extract_conn_params_from_section
+from caldav.lib.error import ETagMismatchError, NotFoundError, ScheduleTagMismatchError, UidConflictError
 
 from plann.template import Template
 from plann.timespec import (
@@ -301,13 +302,22 @@ def _summary(obj):
 childlike = {'CHILD', 'NEXT', 'FINISHTOSTART'}
 parentlike = {'PARENT', 'FIRST', 'DEPENDS-ON', 'STARTTOFINISH'}
 
-def _procrastinate(objs, delay, check_dependent="error", with_children=False, with_family=False, with_parent=False, err_callback=print, confirm_callback=lambda x: False, recursivity=0):
+def _procrastinate(objs, delay, check_dependent="error", with_children=False, with_family=False, with_parent=False, err_callback=print, confirm_callback=lambda x: False, postponed=None, reload_on_conflict=True, recursivity=0):
     if delay in ('0', '0s', '0m', '0h', '0d', datetime.timedelta(0)):
         ## Do nothing!
         return
     assert recursivity<16 ## TODO: better error message.  Probably we have some kind of relationship loop here.
+    ## UIDs already postponed.  A task may come up again as another
+    ## object, i.e. a parent fetched by set_due and postponed with its
+    ## child.  Pass the same set to postpone several lists.
+    if postponed is None:
+        postponed = set()
     for x in objs:
         if not hasattr(x, 'set_due'):
+            continue
+        uid = x.icalendar_component.get('UID')
+        if uid and uid in postponed:
+            err_callback(f"{_summary(x)} was already postponed")
             continue
         if x.icalendar_component.get('STATUS', 'NEEDS-ACTION') == 'COMPLETED':
             continue
@@ -325,15 +335,15 @@ def _procrastinate(objs, delay, check_dependent="error", with_children=False, wi
             for rel_type in parents_:
                 parents.update(parents_[rel_type])
             if parents:
-                _procrastinate(parents, delay, check_dependent, with_children, with_family, with_parent, err_callback, confirm_callback, recursivity=recursivity+1)
+                _procrastinate(parents, delay, check_dependent, with_children, with_family, with_parent, err_callback, confirm_callback, postponed=postponed, recursivity=recursivity+1)
                 continue
             else:
-                _procrastinate([x], delay, check_dependent, with_children=True, with_family=False, with_parent=False, err_callback=err_callback, confirm_callback=confirm_callback, recursivity=recursivity+1)
+                _procrastinate([x], delay, check_dependent, with_children=True, with_family=False, with_parent=False, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
                 continue
         if with_parent:
             parents = x.get_relatives(reltypes=parentlike)
             for rel_type in parents: ## Should only be PARENT as for now.
-                _procrastinate(parents[rel_type], delay, check_dependent, with_children=True, with_family=False, with_parent=False, err_callback=err_callback, confirm_callback=confirm_callback, recursivity=recursivity+1)
+                _procrastinate(parents[rel_type], delay, check_dependent, with_children=True, with_family=False, with_parent=False, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
 
         chk_parent = 'return' if check_dependent else False
         if isinstance(delay, datetime.date):
@@ -354,7 +364,7 @@ def _procrastinate(objs, delay, check_dependent="error", with_children=False, wi
                 summary = _summary(i)
                 p = parent.icalendar_component
                 if p.get('STATUS') == 'COMPLETED':
-                    _procrastinate([x], new_due, check_dependent=False, err_callback=err_callback, confirm_callback=confirm_callback, recursivity=recursivity+1)
+                    _procrastinate([x], new_due, check_dependent=False, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
                 else:
                     p_postponable = check_dependent == "interactive" and p.get('priority', 9)>2
                     p_auto_postponable = p_postponable and i.get('priority',0) <= p.get('priority', 0)
@@ -363,19 +373,38 @@ def _procrastinate(objs, delay, check_dependent="error", with_children=False, wi
                     else:
                         err_callback(f"{summary} could not be postponed due to parent {_summary(p)} with due {_ensure_ts(p['DUE'])} and priority {p.get('priority', 0)}")
                     if p_postponable and (p_auto_postponable or confirm_callback("procrastinate parent?")):
-                        _procrastinate([parent], new_due+max(parent.get_duration()+x.get_duration()+datetime.timedelta(minutes=1), datetime.timedelta(minutes=1)), check_dependent=check_dependent, err_callback=err_callback, confirm_callback=confirm_callback, recursivity=recursivity+1)
-                        _procrastinate([x], new_due, check_dependent=check_dependent, err_callback=err_callback, confirm_callback=confirm_callback, recursivity=recursivity+1)
+                        ## the child needs it moved, even if postponed already
+                        postponed.discard(p.get('UID'))
+                        _procrastinate([parent], new_due+max(parent.get_duration()+x.get_duration()+datetime.timedelta(minutes=1), datetime.timedelta(minutes=1)), check_dependent=check_dependent, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
+                        _procrastinate([x], new_due, check_dependent=check_dependent, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
             elif check_dependent == "return":
                 return parent
         else:
-            x.save()
+            try:
+                x.save()
+            except UidConflictError:
+                raise
+            except (ETagMismatchError, ScheduleTagMismatchError):
+                if not reload_on_conflict:
+                    err_callback(f"{_summary(x)} could not be saved, it keeps changing on the server")
+                    continue
+                err_callback(f"{_summary(x)} was changed on the server, reloading it")
+                try:
+                    x.load()
+                except NotFoundError:
+                    err_callback(f"{_summary(x)} was deleted on the server")
+                    continue
+                _procrastinate([x], delay, check_dependent, with_children, with_family, with_parent, err_callback, confirm_callback, postponed=postponed, reload_on_conflict=False, recursivity=recursivity+1)
+                continue
+            if uid:
+                postponed.add(uid)
         if with_children:
             ## TODO: refactor.  Make relations into a class.
             children_ = x.get_relatives(reltypes=childlike)
             children = set()
             for rel_type in children_:
                 children.update(children_[rel_type])
-            _procrastinate(children, delay, check_dependent, with_children=True, with_family=False, with_parent=False, err_callback=err_callback, confirm_callback=confirm_callback, recursivity=recursivity+1)
+            _procrastinate(children, delay, check_dependent, with_children=True, with_family=False, with_parent=False, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
 
 def _adjust_ical_relations(obj, relations_wanted={}):
     """

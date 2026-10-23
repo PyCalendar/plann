@@ -307,6 +307,139 @@ def test_procrastinate_without_relations():
             timearg = set_due_mocked.call_args[0][0]
             assert(timearg.astimezone(utc) == future+timedelta(days=10))
 
+def _todo(uid, priority=5, related_to=None):
+    t = Todo()
+    t.data = todo.replace('19970901T130000Z-123404@host.com', uid).replace('PRIORITY:2', f'PRIORITY:{priority}')
+    if related_to:
+        t.icalendar_component.add('RELATED-TO', related_to, parameters={'RELTYPE': 'PARENT'})
+    return t
+
+def test_procrastinate_parent_postponed_by_child():
+    """A parent auto-postponed together with its child is fetched
+    through get_relatives, i.e. as a separate object.  When the stale
+    copy of the parent comes up later in the list, it should not be
+    postponed (and saved) once more - the server would refuse the
+    stale copy, and without the precondition it would get postponed
+    twice."""
+    parent_fresh = _todo('parent')
+    parent_stale = _todo('parent')
+    child = _todo('child', related_to='parent')
+    with patch.object(child, 'save'), \
+         patch.object(child, 'set_due', side_effect=[parent_fresh, None]), \
+         patch.object(parent_fresh, 'save') as fresh_save, \
+         patch.object(parent_fresh, 'set_due', return_value=None), \
+         patch.object(parent_stale, 'save') as stale_save, \
+         patch.object(parent_stale, 'set_due', return_value=None) as stale_set_due:
+        postponed = set()
+        _procrastinate([child], '10d', check_dependent='interactive', err_callback=lambda x: None, postponed=postponed)
+        assert fresh_save.call_count == 1
+        ## another call, as from _dismiss_panic, sharing the set
+        _procrastinate([parent_stale], '10d', check_dependent='interactive', err_callback=lambda x: None, postponed=postponed)
+        assert stale_set_due.call_count == 0
+        assert stale_save.call_count == 0
+
+def test_procrastinate_parent_postponed_again_by_child():
+    """A parent already postponed still has to move when a child
+    needs more time"""
+    parent_fresh = _todo('parent')
+    child = _todo('child', related_to='parent')
+    with patch.object(child, 'save'), \
+         patch.object(child, 'set_due', side_effect=[parent_fresh, None]), \
+         patch.object(parent_fresh, 'save') as fresh_save, \
+         patch.object(parent_fresh, 'set_due', return_value=None):
+        postponed = {'parent'}
+        _procrastinate([child], '10d', check_dependent='interactive', err_callback=lambda x: None, postponed=postponed)
+        assert fresh_save.call_count == 1
+        assert postponed == {'parent', 'child'}
+
+def test_procrastinate_parent_postponed_by_child_same_list():
+    """As above, in one call with the default set, and the skip is
+    reported"""
+    parent_fresh = _todo('parent')
+    parent_stale = _todo('parent')
+    child = _todo('child', related_to='parent')
+    msgs = []
+    with patch.object(child, 'save'), \
+         patch.object(child, 'set_due', side_effect=[parent_fresh, None]), \
+         patch.object(parent_fresh, 'save'), \
+         patch.object(parent_fresh, 'set_due', return_value=None), \
+         patch.object(parent_stale, 'save') as stale_save:
+        _procrastinate([child, parent_stale], '10d', check_dependent='interactive', err_callback=msgs.append)
+        assert stale_save.call_count == 0
+        assert any('already postponed' in m for m in msgs)
+
+def _real_loads(load):
+    ## icalendar_component calls load(only_if_unloaded=True)
+    return [c for c in load.call_args_list if not c.kwargs.get('only_if_unloaded')]
+
+@pytest.mark.parametrize('err', ['ScheduleTagMismatchError', 'ETagMismatchError'])
+def test_procrastinate_reloads_on_precondition_failure(err):
+    """A task changed on the server since it was read is reloaded and
+    postponed from what the server has"""
+    from caldav.lib import error
+    t = _todo('changed')
+    def load(*args, **kwargs):
+        if not kwargs.get('only_if_unloaded'):
+            t.data = t.data.replace('DUE:19970416T045959Z', 'DUE:20530101T120000Z')
+    with patch.object(t, 'save', side_effect=[getattr(error, err)(), None]) as save, \
+         patch.object(t, 'load', side_effect=load) as load_mock, \
+         patch.object(t, 'set_due', return_value=None) as set_due:
+        _procrastinate([t], '10d', err_callback=lambda x: None)
+        assert len(_real_loads(load_mock)) == 1
+        assert save.call_count == 2
+        assert set_due.call_count == 2
+        ## from the reloaded due, not the stale one
+        assert set_due.call_args[0][0].astimezone(utc) == datetime(2053, 1, 11, 12, tzinfo=utc)
+
+def test_procrastinate_precondition_failure_twice():
+    """A 412 that persists after reloading is reported, not retried
+    forever"""
+    from caldav.lib import error
+    t = _todo('changed')
+    msgs = []
+    with patch.object(t, 'save', side_effect=error.ScheduleTagMismatchError()) as save, \
+         patch.object(t, 'load') as load, \
+         patch.object(t, 'set_due', return_value=None):
+        _procrastinate([t], '10d', err_callback=msgs.append)
+        assert len(_real_loads(load)) == 1
+        assert save.call_count == 2
+        assert any('could not' in m for m in msgs)
+
+def test_procrastinate_uid_conflict_not_retried():
+    from caldav.lib import error
+    t = _todo('changed')
+    with patch.object(t, 'save', side_effect=error.UidConflictScheduleTagMismatchError()), \
+         patch.object(t, 'load') as load, \
+         patch.object(t, 'set_due', return_value=None):
+        with pytest.raises(error.UidConflictError):
+            _procrastinate([t], '10d', err_callback=lambda x: None)
+        assert _real_loads(load) == []
+
+def test_procrastinate_deleted_meanwhile():
+    """A task deleted on the server since it was read is skipped"""
+    from caldav.lib import error
+    t = _todo('gone')
+    msgs = []
+    def load(*args, **kwargs):
+        if not kwargs.get('only_if_unloaded'):
+            raise error.NotFoundError()
+    with patch.object(t, 'save', side_effect=error.ETagMismatchError()), \
+         patch.object(t, 'load', side_effect=load), \
+         patch.object(t, 'set_due', return_value=None):
+        _procrastinate([t], '10d', err_callback=msgs.append)
+        assert any('deleted' in m for m in msgs)
+
+def test_procrastinate_without_uid():
+    """Tasks without a UID are not taken for one another"""
+    a = _todo('a')
+    b = _todo('b')
+    for t in (a, b):
+        t.icalendar_component.pop('UID')
+    with patch.object(a, 'save'), patch.object(a, 'set_due', return_value=None), \
+         patch.object(b, 'save') as b_save, patch.object(b, 'set_due', return_value=None):
+        _procrastinate([a, b], '10d')
+        assert b_save.call_count == 1
+
 def test_adjust_ical_relations():
     t = Todo()
     t.data = todo
