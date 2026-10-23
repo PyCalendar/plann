@@ -92,6 +92,7 @@ class TestFindCalendars:
         """A failing command is reported, and only stops discovery under
         --raise-errors."""
         import sys
+
         import pytest
         config_file = tmp_path / "calendar.conf"
         config_file.write_text("")

@@ -19,7 +19,6 @@ plann is a "next generation" reimplementation of calendar-cli
 
 import datetime
 import logging
-import os
 import sys
 
 import caldav

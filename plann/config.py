@@ -4,6 +4,8 @@ import os
 import time
 from getpass import getpass
 
+import calendaring_config
+
 ## The config handling logic originated in plann and has been adopted by the
 ## caldav library - use the caldav implementation rather than carrying a copy.
 ## (The redundant aliases mark config_section and expand_config_section as
@@ -11,8 +13,6 @@ from getpass import getpass
 from caldav.config import config_section as config_section
 from caldav.config import expand_config_section as expand_config_section
 from caldav.config import read_config as _read_config
-
-import calendaring_config
 
 ## Connection parameters are written caldav_-prefixed; caldav's reader
 ## (extract_conn_params_from_section) maps caldav_user/caldav_pass to
