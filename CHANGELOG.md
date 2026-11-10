@@ -8,6 +8,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 ### Fixed
 
 * `interactive manage-tasks`: a parent task postponed together with its child could be postponed once more in its own turn, and with caldav 3.6 this crashed with a "412 Precondition Failed" error.  It is now skipped, with a note.  A task changed on the server in the meantime is reloaded before it is postponed.
+* `interactive manage-tasks` no longer stops with a traceback when the server refuses to store a task it postpones, e.g. with "423 Locked" from a Xandikos server busy with another write.  The task is reported and the rest are still postponed.
 
 ## v1.3.0 - 2026-10-23
 

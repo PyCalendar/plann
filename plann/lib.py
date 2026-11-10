@@ -17,7 +17,7 @@ import caldav
 import click  ## TODO - this should be removed, eventually
 import icalendar
 from caldav.config import extract_conn_params_from_section
-from caldav.lib.error import ETagMismatchError, NotFoundError, ScheduleTagMismatchError, UidConflictError
+from caldav.lib.error import ETagMismatchError, NotFoundError, PutError, ScheduleTagMismatchError, UidConflictError
 
 from plann.template import Template
 from plann.timespec import (
@@ -376,6 +376,10 @@ def _procrastinate(objs, delay, check_dependent="error", with_children=False, wi
                         ## the child needs it moved, even if postponed already
                         postponed.discard(p.get('UID'))
                         _procrastinate([parent], new_due+max(parent.get_duration()+x.get_duration()+datetime.timedelta(minutes=1), datetime.timedelta(minutes=1)), check_dependent=check_dependent, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
+                        if p.get('UID') and p.get('UID') not in postponed:
+                            ## the parent could not be saved - trying the child again would only loop
+                            err_callback(f"{summary} not postponed, as the parent could not be saved")
+                            continue
                         _procrastinate([x], new_due, check_dependent=check_dependent, err_callback=err_callback, confirm_callback=confirm_callback, postponed=postponed, recursivity=recursivity+1)
             elif check_dependent == "return":
                 return parent
@@ -395,6 +399,10 @@ def _procrastinate(objs, delay, check_dependent="error", with_children=False, wi
                     err_callback(f"{_summary(x)} was deleted on the server")
                     continue
                 _procrastinate([x], delay, check_dependent, with_children, with_family, with_parent, err_callback, confirm_callback, postponed=postponed, reload_on_conflict=False, recursivity=recursivity+1)
+                continue
+            except PutError as e:
+                ## i.e. 423 Locked from a busy server - don't abort the rest of the list
+                err_callback(f"{_summary(x)} could not be saved: {e}")
                 continue
             if uid:
                 postponed.add(uid)

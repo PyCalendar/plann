@@ -429,6 +429,52 @@ def test_procrastinate_deleted_meanwhile():
         _procrastinate([t], '10d', err_callback=msgs.append)
         assert any('deleted' in m for m in msgs)
 
+def test_procrastinate_put_error_continues():
+    """A task the server refuses to store (here 423 Locked, from a
+    git-backed Xandikos busy with another write) is reported, and the
+    rest of the list is still postponed"""
+    from caldav.lib import error
+    a = _todo('a')
+    b = _todo('b')
+    msgs = []
+    postponed = set()
+    with patch.object(a, 'save', side_effect=error.PutError("423 Locked")), \
+         patch.object(a, 'set_due', return_value=None), \
+         patch.object(b, 'save') as b_save, patch.object(b, 'set_due', return_value=None):
+        _procrastinate([a, b], '10d', err_callback=msgs.append, postponed=postponed)
+        assert b_save.call_count == 1
+        assert any('could not be saved' in m and '423' in m for m in msgs)
+        assert postponed == {'b'}
+
+def test_procrastinate_parent_put_error():
+    """When the parent the child needs moved cannot be saved, the
+    child is reported as not postponed, and not retried over and over"""
+    from caldav.lib import error
+    parent = _todo('parent')
+    child = _todo('child', related_to='parent')
+    msgs = []
+    with patch.object(child, 'set_due', return_value=parent) as child_set_due, \
+         patch.object(child, 'save') as child_save, \
+         patch.object(parent, 'save', side_effect=error.PutError("423 Locked")) as parent_save, \
+         patch.object(parent, 'set_due', return_value=None):
+        _procrastinate([child], '10d', check_dependent='interactive', err_callback=msgs.append)
+        assert parent_save.call_count == 1
+        assert child_set_due.call_count == 1
+        assert child_save.call_count == 0
+        assert any('not postponed, as the parent could not be saved' in m for m in msgs)
+
+def test_procrastinate_put_error_after_reload():
+    """A PutError on the save after reloading is reported, too"""
+    from caldav.lib import error
+    t = _todo('changed')
+    msgs = []
+    with patch.object(t, 'save', side_effect=[error.ETagMismatchError(), error.PutError("423 Locked")]) as save, \
+         patch.object(t, 'load'), \
+         patch.object(t, 'set_due', return_value=None):
+        _procrastinate([t], '10d', err_callback=msgs.append)
+        assert save.call_count == 2
+        assert any('could not be saved' in m for m in msgs)
+
 def test_procrastinate_without_uid():
     """Tasks without a UID are not taken for one another"""
     a = _todo('a')
