@@ -5,19 +5,24 @@
 ## TODO: tests with multiple source calendars.  Some of the interactive edit-through-editor functions will probably break.
 
 import asyncio
+import datetime
 import os
+import re
 import tempfile
 import threading
 import time
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import aiohttp
 import aiohttp.web
 import caldav
 import niquests as requests
+from caldav.lib.error import PutError
 from xandikos.web import SingleUserFilesystemBackend, XandikosApp
 
 from plann.cli import _add_journal, _add_todo, _check_for_panic, _list, _select
+from plann.commands import _add_event, _check_pinned
 from plann.interactive import (
     _interactive_edit,
     _interactive_relation_edit,
@@ -25,8 +30,9 @@ from plann.interactive import (
     _mass_reprioritize,
     command_edit,
 )
-from plann.lib import _adjust_ical_relations, _adjust_relations
+from plann.lib import _adjust_ical_relations, _adjust_relations, _summary
 from plann.panic_planning import timeline_suggestion
+from plann.timespec import _now, tz
 from tests.test_panic import datetime_
 
 
@@ -148,6 +154,8 @@ def stop_xandikos_server(server_params):
         time.sleep(0.05)
         i += 1
         assert i < 100
+    server_params['xandikos_app_loop'].close()
+    asyncio.set_event_loop(None)
 
     server_params['serverdir'].__exit__(None, None, None)
 
@@ -451,6 +459,144 @@ def _run_plann_tests(calendars):
     ## TODO: run this for dtend and dtstart on an event as well
     command_edit(todo1, 'set due=2012-12-19 19:15:00', interactive=False)
     assert todo1.icalendar_component['DUE'].dt > todo1.icalendar_component['DTSTART'].dt
+
+def test_check_pinned():
+    conn_details = start_xandikos_server()
+    try:
+        with caldav.get_calendars(
+            url=conn_details['caldav_url'],
+            username=conn_details['caldav_user'],
+            password=conn_details['caldav_password'],
+            raise_errors=True,
+        ) as calendars:
+            _run_check_pinned_tests(calendars)
+    finally:
+        stop_xandikos_server(conn_details)
+
+
+def _run_check_pinned_tests(calendars):
+    ctx = MagicMock()
+    ctx.obj = dict()
+    ctx.obj['calendars'] = list(calendars)
+    hour = datetime.timedelta(hours=1)
+    now = _now()
+    ## midnight two days ago - all pins are well in the past, whatever the time of day
+    base = (now - 48*hour).replace(hour=0, minute=0, second=0)
+
+    def task(summary, parent=None):
+        kwargs = {'set_parent': [parent]} if parent else {}
+        return _add_todo(ctx, summary=[summary], set_due=f"{now + 48*hour:%F %H:%M:%S}", set_duration='1h', set_uid=summary.replace(' ', '-'), **kwargs)
+
+    def uid(obj):
+        return str(obj.icalendar_component['UID'])
+
+    def pin(todo, begin, status='TENTATIVE', parents=None):
+        return _add_event(ctx, summary=_summary(todo), timespec=(begin, begin+hour), set_status=status, set_parent=parents or [uid(todo)])
+
+    def status(obj):
+        obj.load()
+        return obj.icalendar_component['STATUS']
+
+    done = task('write report')
+    not_done = task('fix bike')
+    skipped = task('call mom')
+    reviewed = task('water plants')
+    parent = task('paint house')
+    child = task('buy paint', parent=uid(parent))
+    partial = task('tidy garage')
+    early = task('early')
+    late = task('late')
+
+    ## two past pins of the same task - the first one is asked about
+    ev_done_first = pin(done, base)
+    ev_done = pin(done, base + 2*hour)
+    ev_not_done = pin(not_done, base + 4*hour)
+    ev_skipped = pin(skipped, base + 6*hour)
+    ## already answered on an earlier run
+    ev_reviewed = pin(reviewed, base + 8*hour, status='CONFIRMED')
+    ## one event pinning both a task and its subtask
+    pin(parent, base + 10*hour, parents=[uid(parent), uid(child)])
+    ev_partial = pin(partial, base + 12*hour)
+    ## the day before, stored in different timezones.  "early" is 09:00
+    ## UTC, but its wall clock time 18:00 sorts after the 10:00 of "late"
+    day = (base - 24*hour).date()
+    pin(early, datetime.datetime(day.year, day.month, day.day, 18, tzinfo=ZoneInfo('Asia/Tokyo')))
+    pin(late, datetime.datetime(day.year, day.month, day.day, 10, tzinfo=ZoneInfo('UTC')))
+    ## pinned for later, should not be asked about
+    ev_future = pin(done, now + 24*hour)
+    ev_not_done_future = pin(not_done, now + 24*hour)
+    ## ongoing, should not be asked about
+    ev_ongoing = pin(not_done, now - hour/2)
+    ## pinned too long ago
+    pin(skipped, now - 30*24*hour)
+
+    answers = {'write report': 'y', 'fix bike': 'n', 'paint house': 'y', 'tidy garage': 'p'}
+    asked = []
+    echoed = []
+    def prompt(*largs, **kwargs):
+        question = [x for x in echoed if re.match(r'\d{4}-\d\d-\d\d \d\d:\d\d - ', x)][-1]
+        asked.append(question)
+        return answers.get(question.split(': ', 1)[1], 's')
+
+    completed = []
+    orig_complete = caldav.Todo.complete
+    def complete(self, *largs, **kwargs):
+        completed.append(uid(self))
+        return orig_complete(self, *largs, **kwargs)
+
+    with patch('plann.commands.click.echo', new=lambda x='', **kw: echoed.append(str(x))):
+        with patch('plann.commands.click.prompt', new=prompt):
+            ## the user declines to split out the partially done work
+            with patch('click.confirm', side_effect=lambda text, **kw: 'working on this' not in text) as confirm:
+                with patch.object(caldav.Todo, 'complete', new=complete):
+                    _check_pinned(ctx, lookback='7d')
+    summaries = [x.split(': ', 1)[1] for x in asked]
+    ## chronologically, whatever timezone the events are stored in
+    assert summaries == ['early', 'late', 'write report', 'fix bike', 'call mom', 'paint house', 'tidy garage']
+    ## shown in local time
+    tokyo_local = datetime.datetime(day.year, day.month, day.day, 18, tzinfo=ZoneInfo('Asia/Tokyo')).astimezone(tz.implicit_timezone)
+    assert asked[0].startswith(f"{tokyo_local:%F %H:%M} - ")
+    ## asked about the other pins of the completed task, and about the split
+    assert [x.args[0].startswith('Cancel 2 other pinned') for x in confirm.call_args_list] == [True, False]
+
+    assert status(done) == 'COMPLETED'
+    assert status(ev_done_first) == 'CONFIRMED'
+    assert status(ev_done) == 'CANCELLED'
+    assert status(ev_future) == 'CANCELLED'
+    assert status(not_done) == 'NEEDS-ACTION'
+    assert status(ev_not_done) == 'CANCELLED'
+    assert status(ev_not_done_future) == 'TENTATIVE'
+    assert status(ev_ongoing) == 'TENTATIVE'
+    assert status(skipped) == 'NEEDS-ACTION'
+    assert status(ev_skipped) == 'TENTATIVE'
+    assert status(ev_reviewed) == 'CONFIRMED'
+    ## the subtask is completed along with its parent, and only once
+    assert status(parent) == 'COMPLETED'
+    assert status(child) == 'COMPLETED'
+    assert completed.count(uid(child)) == 1
+    ## nothing was split out, so it is asked about again
+    assert status(partial) == 'NEEDS-ACTION'
+    assert status(ev_partial) == 'TENTATIVE'
+
+    ## a second run only asks about the skipped ones
+    answers.clear()
+    asked.clear()
+    with patch('plann.commands.click.echo', new=lambda x='', **kw: echoed.append(str(x))):
+        with patch('plann.commands.click.prompt', new=prompt):
+            with patch('click.confirm', return_value=False) as confirm:
+                _check_pinned(ctx, lookback='7d')
+    assert [x.split(': ', 1)[1] for x in asked] == ['early', 'late', 'call mom', 'tidy garage']
+    assert not confirm.called
+
+    ## a server refusing to save does not stop the rest of the questions
+    answers.update({'early': 'n', 'late': 'n'})
+    asked.clear()
+    with patch('plann.commands.click.echo', new=lambda x='', **kw: echoed.append(str(x))):
+        with patch('plann.commands.click.prompt', new=prompt):
+            with patch('plann.commands._set_event_status', side_effect=PutError('423 Locked')):
+                _check_pinned(ctx, lookback='7d')
+    assert [x.split(': ', 1)[1] for x in asked] == ['early', 'late', 'call mom', 'tidy garage']
+    assert any('423 Locked' in x for x in echoed)
 
 ## TODO:
 ## Things to be tested: lib._procrastinate, cli._select, cli._cats, cli._list, cli._interactive_edit, cli._set_something, cli._interactive_ical_edit, cli._edit, cli._check_for_panic, _add_todo, _agenda, _check_due,

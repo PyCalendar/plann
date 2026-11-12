@@ -7,6 +7,7 @@ import caldav
 
 ## TODO: can we remove the click-dependency?
 import click
+from caldav.lib.error import ETagMismatchError, PutError, ScheduleTagMismatchError
 from icalendar_searcher import Searcher
 
 from plann.interactive import (
@@ -192,11 +193,11 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
         for obj in ctx.obj['objs']:
             if isinstance(obj, caldav.Event):
                 if obj.icalendar_component.get('STATUS', '') != 'CANCELLED':
-                    parents = _relships_by_type(obj, 'PARENT').get('PARENT',[])
-                    if any(x for x in parents if isinstance(x, caldav.Todo) and x.icalendar_component.get('STATUS', 'NEEDS-ACTION') == 'NEEDS-ACTION') == pinned_tasks:
+                    open_parents = _pinned_task_parents(obj)
+                    if bool(open_parents) == pinned_tasks:
                         if kwargs_.get('todo'):
                             ## TODO: special handling for recurring tasks
-                            ret_objs.extend([x for x in parents if isinstance(x, caldav.Todo)  and x.icalendar_component.get('STATUS', 'NEEDS-ACTION') == 'NEEDS-ACTION'])
+                            ret_objs.extend(open_parents)
                         else:
                             ret_objs.append(obj)
             if isinstance(obj, caldav.Todo) and not pinned_tasks:
@@ -477,6 +478,7 @@ def _add_event(ctx, timespec, **kwargs):
         (dtstart, dtend) = parse_timespec(timespec, for_storage=True)
         event = cal.save_event(dtstart=dtstart, dtend=dtend, **ctx.obj['set_args'], no_overwrite=True)
         click.echo(f"uid={event.id}")
+    return event
 
 def _agenda(ctx):
     start = datetime.datetime.now()
@@ -500,6 +502,84 @@ def _check_due(ctx, limit=16, lookahead='24h'):
         if dtstart.strftime("%F%H%M") > end_.strftime("%F%H%M"):
             continue
         _interactive_edit(obj)
+
+def _pinned_task_parents(event):
+    """the open tasks an event pins to the calendar"""
+    return [x for x in _relships_by_type(event, 'PARENT').get('PARENT', [])
+            if isinstance(x, caldav.Todo) and x.icalendar_component.get('STATUS', 'NEEDS-ACTION') == 'NEEDS-ACTION']
+
+def _set_event_status(event, status):
+    event.icalendar_component['STATUS'] = status
+    event.save()
+
+def _cancel_other_pins(task, event):
+    """offer to cancel the other events pinning a completed task to the calendar"""
+    if task.icalendar_component.get('RRULE'):
+        ## the next recurrence is still to be done
+        return
+    pins = [x for x in _relships_by_type(task, 'CHILD').get('CHILD', [])
+            if isinstance(x, caldav.Event)
+            and x.icalendar_component.get('STATUS', '') not in ('CANCELLED', 'CONFIRMED')
+            and x.icalendar_component['UID'] != event.icalendar_component['UID']]
+    if pins and click.confirm(f"Cancel {len(pins)} other pinned event(s) for '{_summary(task)}'?"):
+        for pin in pins:
+            _set_event_status(pin, 'CANCELLED')
+
+def _check_pinned(ctx, lookback='7d'):
+    """Go through past events pinning a task to the calendar, and ask
+    if the task was done.  A done task is completed, the event is
+    marked as CONFIRMED.  If the task wasn't done, the event is
+    cancelled.
+    """
+    now = _now()
+    _select(ctx=ctx, event=True, start=now-parse_add_dur(None, lookback), end=now, pinned_tasks=True)
+    ## sorted on the timestamps, events may be stored in different timezones
+    for event in sorted(ctx.obj['objs'], key=lambda x: _ensure_ts(x.icalendar_component.get('DTSTART'))):
+        comp = event.icalendar_component
+        if comp.get('STATUS', '') == 'CONFIRMED':
+            ## already dealt with
+            continue
+        dtstart = _ensure_ts(comp.get('DTSTART')).astimezone(tz.implicit_timezone)
+        dtend = _ensure_ts(comp.get('DTEND')).astimezone(tz.implicit_timezone) if comp.get('DTEND') else dtstart + event.get_duration()
+        if dtend > now:
+            ## still ongoing
+            continue
+        tasks = _pinned_task_parents(event)
+        if not tasks:
+            ## e.g. completed when answering for an earlier pin
+            continue
+        end_format = '%H:%M' if dtend.date() == dtstart.date() else '%F %H:%M'
+        click.echo(f"{dtstart:%F %H:%M} - {dtend:{end_format}}: {_summary(event)}")
+        while True:
+            answer = click.prompt("Was it done? y(es) / n(o) / p(artially) / e(dit task) / s(kip)", default='s')[:1].lower()
+            if answer == 'e':
+                for task in tasks:
+                    _interactive_edit(task)
+                tasks = _pinned_task_parents(event)
+                if not tasks:
+                    break
+                continue
+            break
+        try:
+            if answer == 'y':
+                ## one cache for all, so a subtask pinned along with its parent is completed once
+                cache = _RelativeCache()
+                cache.add_objects(tasks)
+                completed = set()
+                for task in tasks:
+                    _complete(task, err_callback=click.echo, cache=cache, _seen=completed)
+                _set_event_status(event, 'CONFIRMED')
+                for task in tasks:
+                    _cancel_other_pins(task, event)
+            elif answer == 'n':
+                _set_event_status(event, 'CANCELLED')
+            elif answer == 'p':
+                split = [interactive_split_task(task, partially_complete=True, too_big=False) for task in tasks]
+                if any(split):
+                    _set_event_status(event, 'CONFIRMED')
+        except (ETagMismatchError, ScheduleTagMismatchError, PutError) as e:
+            ## i.e. 423 Locked from a busy server - don't abort the rest of the list
+            click.echo(f"Could not save the changes for '{_summary(event)}': {e}")
 
 def _dismiss_panic(ctx, hours_per_day, lookahead='60d'):
     ## TODO: fetch both events and tasks

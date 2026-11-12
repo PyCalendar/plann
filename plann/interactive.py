@@ -311,6 +311,7 @@ def _mass_interactive_edit(objs, default='ignore'):
         _command_line_edit(line, interactive=True, calendar=objs[0].parent, complete_cache=complete_cache, completed=completed)
 
 def interactive_split_task(obj, partially_complete=False, too_big=True):
+    """returns True if any subtask was split out"""
     comp = obj.icalendar_component
     summary = _summary(obj)
     estimate = obj.get_duration()
@@ -350,6 +351,8 @@ def interactive_split_task(obj, partially_complete=False, too_big=True):
         if postpone not in ('0h', '0'): ## TODO: regexp?
             _procrastinate([obj], postpone, check_dependent='interactive', err_callback=click.echo, confirm_callback=click.confirm)
         obj.save()
+        return True
+    return False
 
 def _editor(sometext):
     with tempfile.NamedTemporaryFile(mode='w', encoding='UTF-8', delete=False) as tmpfile:
