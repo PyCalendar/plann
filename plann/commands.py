@@ -7,7 +7,7 @@ import caldav
 
 ## TODO: can we remove the click-dependency?
 import click
-from caldav.lib.error import ETagMismatchError, PutError, ScheduleTagMismatchError
+from caldav.lib.error import ETagMismatchError, NotFoundError, PutError, ScheduleTagMismatchError
 from icalendar_searcher import Searcher
 
 from plann.interactive import (
@@ -508,22 +508,30 @@ def _pinned_task_parents(event):
     return [x for x in _relships_by_type(event, 'PARENT').get('PARENT', [])
             if isinstance(x, caldav.Todo) and x.icalendar_component.get('STATUS', 'NEEDS-ACTION') == 'NEEDS-ACTION']
 
+## errors that should not stop the questions about the remaining events
+_save_errors = (ETagMismatchError, ScheduleTagMismatchError, PutError, NotFoundError)
+
 def _set_event_status(event, status):
     event.icalendar_component['STATUS'] = status
     event.save()
 
 def _cancel_other_pins(task, event):
-    """offer to cancel the other events pinning a completed task to the calendar"""
+    """offer to cancel the other events pinning a completed task to the
+    calendar - unless they also pin some task that is still open"""
     if task.icalendar_component.get('RRULE'):
         ## the next recurrence is still to be done
         return
     pins = [x for x in _relships_by_type(task, 'CHILD').get('CHILD', [])
             if isinstance(x, caldav.Event)
             and x.icalendar_component.get('STATUS', '') not in ('CANCELLED', 'CONFIRMED')
-            and x.icalendar_component['UID'] != event.icalendar_component['UID']]
+            and x.icalendar_component['UID'] != event.icalendar_component['UID']
+            and not _pinned_task_parents(x)]
     if pins and click.confirm(f"Cancel {len(pins)} other pinned event(s) for '{_summary(task)}'?"):
         for pin in pins:
-            _set_event_status(pin, 'CANCELLED')
+            try:
+                _set_event_status(pin, 'CANCELLED')
+            except _save_errors as e:
+                click.echo(f"Could not cancel '{_summary(pin)}': {e}")
 
 def _check_pinned(ctx, lookback='7d'):
     """Go through past events pinning a task to the calendar, and ask
@@ -550,34 +558,42 @@ def _check_pinned(ctx, lookback='7d'):
             continue
         end_format = '%H:%M' if dtend.date() == dtstart.date() else '%F %H:%M'
         click.echo(f"{dtstart:%F %H:%M} - {dtend:{end_format}}: {_summary(event)}")
+        edited = []
         while True:
             answer = click.prompt("Was it done? y(es) / n(o) / p(artially) / e(dit task) / s(kip)", default='s')[:1].lower()
             if answer == 'e':
                 for task in tasks:
                     _interactive_edit(task)
+                edited.extend(tasks)
                 tasks = _pinned_task_parents(event)
                 if not tasks:
                     break
                 continue
             break
         try:
-            if answer == 'y':
+            if answer == 'e':
+                ## every task was closed in the edit
+                done = any(x.icalendar_component.get('STATUS') == 'COMPLETED' for x in edited)
+                _set_event_status(event, 'CONFIRMED' if done else 'CANCELLED')
+            elif answer == 'y':
                 ## one cache for all, so a subtask pinned along with its parent is completed once
                 cache = _RelativeCache()
                 cache.add_objects(tasks)
                 completed = set()
                 for task in tasks:
                     _complete(task, err_callback=click.echo, cache=cache, _seen=completed)
-                _set_event_status(event, 'CONFIRMED')
+                ## before confirming the event: if that fails, the event
+                ## is not asked about again, as the task is done
                 for task in tasks:
                     _cancel_other_pins(task, event)
+                _set_event_status(event, 'CONFIRMED')
             elif answer == 'n':
                 _set_event_status(event, 'CANCELLED')
             elif answer == 'p':
                 split = [interactive_split_task(task, partially_complete=True, too_big=False) for task in tasks]
                 if any(split):
                     _set_event_status(event, 'CONFIRMED')
-        except (ETagMismatchError, ScheduleTagMismatchError, PutError) as e:
+        except _save_errors as e:
             ## i.e. 423 Locked from a busy server - don't abort the rest of the list
             click.echo(f"Could not save the changes for '{_summary(event)}': {e}")
 

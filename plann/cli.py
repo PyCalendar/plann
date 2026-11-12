@@ -681,7 +681,7 @@ def manage_tasks(ctx):
     * split-huge-tasks
     * split-high-pri-tasks
     * set-task-attribs
-    * dismiss-panic
+    * dismiss-panic, with 24 and then 14 hours per day
     * check-due
     * pin tasks to the calendar (check-for-panic, interactive fix of the timeline)
     * agenda

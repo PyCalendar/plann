@@ -22,7 +22,7 @@ from caldav.lib.error import PutError
 from xandikos.web import SingleUserFilesystemBackend, XandikosApp
 
 from plann.cli import _add_journal, _add_todo, _check_for_panic, _list, _select
-from plann.commands import _add_event, _check_pinned
+from plann.commands import _add_event, _check_pinned, _set_event_status
 from plann.interactive import (
     _interactive_edit,
     _interactive_relation_edit,
@@ -483,15 +483,17 @@ def _run_check_pinned_tests(calendars):
     ## midnight two days ago - all pins are well in the past, whatever the time of day
     base = (now - 48*hour).replace(hour=0, minute=0, second=0)
 
-    def task(summary, parent=None):
+    def task(summary, parent=None, rrule=None):
         kwargs = {'set_parent': [parent]} if parent else {}
+        if rrule:
+            kwargs['set_rrule'] = rrule
         return _add_todo(ctx, summary=[summary], set_due=f"{now + 48*hour:%F %H:%M:%S}", set_duration='1h', set_uid=summary.replace(' ', '-'), **kwargs)
 
     def uid(obj):
         return str(obj.icalendar_component['UID'])
 
-    def pin(todo, begin, status='TENTATIVE', parents=None):
-        return _add_event(ctx, summary=_summary(todo), timespec=(begin, begin+hour), set_status=status, set_parent=parents or [uid(todo)])
+    def pin(todo, begin, status='TENTATIVE', parents=None, summary=None):
+        return _add_event(ctx, summary=summary or _summary(todo), timespec=(begin, begin+hour), set_status=status, set_parent=parents or [uid(todo)])
 
     def status(obj):
         obj.load()
@@ -506,6 +508,11 @@ def _run_check_pinned_tests(calendars):
     partial = task('tidy garage')
     early = task('early')
     late = task('late')
+    pack = task('pack bag')
+    food = task('buy food')
+    edited = task('clean deck')
+    weekly = task('weekly backup', rrule='FREQ=WEEKLY')
+    screws = task('sort screws')
 
     ## two past pins of the same task - the first one is asked about
     ev_done_first = pin(done, base)
@@ -517,6 +524,15 @@ def _run_check_pinned_tests(calendars):
     ## one event pinning both a task and its subtask
     pin(parent, base + 10*hour, parents=[uid(parent), uid(child)])
     ev_partial = pin(partial, base + 12*hour)
+    ev_pack = pin(pack, base + 14*hour)
+    ## shared with a task that is not done, so not offered for cancelling
+    ev_shared = pin(pack, base + 16*hour, parents=[uid(pack), uid(food)], summary='shared pin')
+    ## completed through the edit prompt
+    ev_edited = pin(edited, base + 18*hour)
+    ev_weekly = pin(weekly, base + 20*hour)
+    ev_weekly_future = pin(weekly, now + 24*hour)
+    ## partially done, a subtask is split out
+    ev_screws = pin(screws, base + 22*hour)
     ## the day before, stored in different timezones.  "early" is 09:00
     ## UTC, but its wall clock time 18:00 sorts after the 10:00 of "late"
     day = (base - 24*hour).date()
@@ -530,13 +546,25 @@ def _run_check_pinned_tests(calendars):
     ## pinned too long ago
     pin(skipped, now - 30*24*hour)
 
-    answers = {'write report': 'y', 'fix bike': 'n', 'paint house': 'y', 'tidy garage': 'p'}
+    answers = {'write report': 'y', 'fix bike': 'n', 'paint house': 'y', 'tidy garage': 'p',
+               'pack bag': 'y', 'shared pin': 's', 'clean deck': 'e', 'weekly backup': 'y', 'sort screws': 'p'}
     asked = []
     echoed = []
-    def prompt(*largs, **kwargs):
-        question = [x for x in echoed if re.match(r'\d{4}-\d\d-\d\d \d\d:\d\d - ', x)][-1]
-        asked.append(question)
-        return answers.get(question.split(': ', 1)[1], 's')
+    def prompt(text, default=None, **kwargs):
+        if text.startswith('Was it done?'):
+            question = [x for x in echoed if re.match(r'\d{4}-\d\d-\d\d \d\d:\d\d - ', x)][-1]
+            asked.append(question)
+            return answers.get(question.split(': ', 1)[1], 's')
+        ## the edit prompt, the questions when splitting out a subtask
+        replies = {'postpone': 'complete', 'Name for the subtask': default, 'what is the remaining': '1h',
+                   'Summary of the parent': default, 'Should we postpone': '0h'}
+        return next(v for k, v in replies.items() if text.startswith(k))
+
+    def confirm_(text, **kwargs):
+        if 'working on this' in text:
+            ## the user declines to split out the work on the garage
+            return not [x for x in echoed if ': estimate is ' in x][-1].startswith('tidy garage')
+        return True
 
     completed = []
     orig_complete = caldav.Todo.complete
@@ -544,20 +572,21 @@ def _run_check_pinned_tests(calendars):
         completed.append(uid(self))
         return orig_complete(self, *largs, **kwargs)
 
-    with patch('plann.commands.click.echo', new=lambda x='', **kw: echoed.append(str(x))):
-        with patch('plann.commands.click.prompt', new=prompt):
-            ## the user declines to split out the partially done work
-            with patch('click.confirm', side_effect=lambda text, **kw: 'working on this' not in text) as confirm:
+    with patch('click.echo', new=lambda x='', **kw: echoed.append(str(x))):
+        with patch('click.prompt', new=prompt):
+            with patch('click.confirm', side_effect=confirm_) as confirm:
                 with patch.object(caldav.Todo, 'complete', new=complete):
                     _check_pinned(ctx, lookback='7d')
     summaries = [x.split(': ', 1)[1] for x in asked]
     ## chronologically, whatever timezone the events are stored in
-    assert summaries == ['early', 'late', 'write report', 'fix bike', 'call mom', 'paint house', 'tidy garage']
+    assert summaries == ['early', 'late', 'write report', 'fix bike', 'call mom', 'paint house', 'tidy garage',
+                         'pack bag', 'shared pin', 'clean deck', 'weekly backup', 'sort screws']
     ## shown in local time
     tokyo_local = datetime.datetime(day.year, day.month, day.day, 18, tzinfo=ZoneInfo('Asia/Tokyo')).astimezone(tz.implicit_timezone)
     assert asked[0].startswith(f"{tokyo_local:%F %H:%M} - ")
-    ## asked about the other pins of the completed task, and about the split
-    assert [x.args[0].startswith('Cancel 2 other pinned') for x in confirm.call_args_list] == [True, False]
+    ## asked about the other pins of the completed task, and about the two splits -
+    ## not about the pin shared with an open task, nor the pins of a recurring task
+    assert [x.args[0][:22] for x in confirm.call_args_list] == ['Cancel 2 other pinned ', "So you've been working", "So you've been working"]
 
     assert status(done) == 'COMPLETED'
     assert status(ev_done_first) == 'CONFIRMED'
@@ -577,26 +606,55 @@ def _run_check_pinned_tests(calendars):
     ## nothing was split out, so it is asked about again
     assert status(partial) == 'NEEDS-ACTION'
     assert status(ev_partial) == 'TENTATIVE'
+    assert status(pack) == 'COMPLETED'
+    assert status(ev_pack) == 'CONFIRMED'
+    assert status(food) == 'NEEDS-ACTION'
+    assert status(ev_shared) == 'TENTATIVE'
+    assert status(edited) == 'COMPLETED'
+    assert status(ev_edited) == 'CONFIRMED'
+    ## the recurring task moves on to its next recurrence
+    weekly_due = weekly.get_due()
+    assert status(weekly) == 'NEEDS-ACTION'
+    assert weekly.get_due() > weekly_due
+    assert status(ev_weekly) == 'CONFIRMED'
+    assert status(ev_weekly_future) == 'TENTATIVE'
+    assert status(screws) == 'NEEDS-ACTION'
+    assert status(ev_screws) == 'CONFIRMED'
+    subtasks = [x for x in screws.get_relatives({'CHILD'})['CHILD'] if isinstance(x, caldav.Todo)]
+    assert [_summary(x) for x in subtasks] == ['Work on sort screws']
+    assert status(subtasks[0]) == 'COMPLETED'
 
     ## a second run only asks about the skipped ones
     answers.clear()
     asked.clear()
-    with patch('plann.commands.click.echo', new=lambda x='', **kw: echoed.append(str(x))):
-        with patch('plann.commands.click.prompt', new=prompt):
+    with patch('click.echo', new=lambda x='', **kw: echoed.append(str(x))):
+        with patch('click.prompt', new=prompt):
             with patch('click.confirm', return_value=False) as confirm:
                 _check_pinned(ctx, lookback='7d')
-    assert [x.split(': ', 1)[1] for x in asked] == ['early', 'late', 'call mom', 'tidy garage']
+    assert [x.split(': ', 1)[1] for x in asked] == ['early', 'late', 'call mom', 'tidy garage', 'shared pin']
     assert not confirm.called
 
-    ## a server refusing to save does not stop the rest of the questions
-    answers.update({'early': 'n', 'late': 'n'})
+    ## a server refusing to save does not stop the rest of the questions,
+    ## and the other pins of a completed task are still offered for cancelling
+    mow = task('mow lawn')
+    ev_mow = pin(mow, base + 23*hour)
+    ev_mow_future = pin(mow, now + 24*hour)
+    answers.update({'early': 'n', 'late': 'n', 'mow lawn': 'y'})
     asked.clear()
-    with patch('plann.commands.click.echo', new=lambda x='', **kw: echoed.append(str(x))):
-        with patch('plann.commands.click.prompt', new=prompt):
-            with patch('plann.commands._set_event_status', side_effect=PutError('423 Locked')):
-                _check_pinned(ctx, lookback='7d')
-    assert [x.split(': ', 1)[1] for x in asked] == ['early', 'late', 'call mom', 'tidy garage']
+    def set_event_status(event, status):
+        if status == 'CONFIRMED' or _summary(event) in ('early', 'late'):
+            raise PutError('423 Locked')
+        return _set_event_status(event, status)
+    with patch('click.echo', new=lambda x='', **kw: echoed.append(str(x))):
+        with patch('click.prompt', new=prompt):
+            with patch('click.confirm', return_value=True) as confirm:
+                with patch('plann.commands._set_event_status', new=set_event_status):
+                    _check_pinned(ctx, lookback='7d')
+    assert [x.split(': ', 1)[1] for x in asked] == ['early', 'late', 'call mom', 'tidy garage', 'shared pin', 'mow lawn']
     assert any('423 Locked' in x for x in echoed)
+    assert status(mow) == 'COMPLETED'
+    assert status(ev_mow) == 'TENTATIVE'
+    assert status(ev_mow_future) == 'CANCELLED'
 
 ## TODO:
 ## Things to be tested: lib._procrastinate, cli._select, cli._cats, cli._list, cli._interactive_edit, cli._set_something, cli._interactive_ical_edit, cli._edit, cli._check_for_panic, _add_todo, _agenda, _check_due,
