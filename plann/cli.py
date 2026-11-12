@@ -32,6 +32,7 @@ from plann.commands import (
     _cats,
     _check_due,
     _check_for_panic,
+    _check_pinned,
     _dismiss_panic,
     _edit,
     _select,
@@ -666,8 +667,8 @@ def interactive(ctx):
     experimenting with his own task list and testing out daily
     procedures, hence it's also quite optimized towards whatever
     work-flows that seems to work out for the maintainer of the
-    plann.  Things are changed rapidly without warnings and the
-    interactive stuff is not covered by any test code whatsoever.
+    plann.  Things are changed rapidly without warnings and most of
+    the interactive stuff is not covered by test code.
     """
 
 
@@ -676,18 +677,17 @@ def interactive(ctx):
 def manage_tasks(ctx):
     """
     This goes through the daily task management procedures:
-    * set-task-attribs
-    * agenda
-    * check-due
+    * check-pinned
     * split-huge-tasks
     * split-high-pri-tasks
-    * dismiss-panic
-    * interactive-fix-panic
+    * set-task-attribs
+    * dismiss-panic, with 24 and then 14 hours per day
+    * check-due
+    * pin tasks to the calendar (check-for-panic, interactive fix of the timeline)
+    * agenda
     """
-    ## TODO: pinned tasks for the previous week.
-    ## * Go through the events ... for each of them, ask if it was done or not
-    ## * If the event was done, mark the task as completed
-    ## * If the event wasn't done, mark the event as cancelled
+    click.echo("Checking if the tasks pinned to your calendar the last week were done")
+    _check_pinned(ctx)
     click.echo("Checking if there are any huge tasks that may need to be split")
     _split_huge_tasks(ctx)
     click.echo("Checking if there are any high-priority tasks ... it's adviceable to split them up into subtasks with a shorter due-date")
@@ -714,6 +714,18 @@ def check_due(ctx, limit, lookahead):
     Go through overdue or near-future-due tasks, one by one, and deal with them
     """
     return _check_due(ctx, limit, lookahead)
+
+@interactive.command()
+@click.option('--lookback', help='how far back to look for events pinning tasks to the calendar', default='7d')
+@click.pass_context
+def check_pinned(ctx, lookback):
+    """
+    Go through past events pinning tasks to the calendar, and ask if the tasks were done
+
+    Done tasks are completed, and the event is confirmed.  If a task
+    was not done, the event is cancelled.
+    """
+    return _check_pinned(ctx, lookback)
 
 @interactive.command()
 @click.option('--hours-per-day', help='how many hours per day you expect to be able to dedicate to those tasks/events', default=4)

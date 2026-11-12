@@ -371,13 +371,15 @@ There is another interactive edit function, `plann select --summary 'clean' edit
 
 `plann interactive manage-tasks` will do the following:
 
+* `plann interactive check-pinned` - asks if the tasks pinned to the calendar through events the last week were done
 * `plann interactive split-huge-tasks`
-* `plan interactive split-high-pri-tasks`
+* `plann interactive split-high-pri-tasks`
 * `plann interactive set-task-attribs`
-* `plann agenda`
 * `plann interactive dismiss-panic --hours-per-day=24`
+* `plann interactive dismiss-panic --hours-per-day=14`
 * `plann interactive check-due`
-* `plann interactive dismiss-panic --hours-per-day=8`
+* pins tasks to the calendar for the next five days, through the panic planning
+* `plann agenda`
 
 ### Completing tasks
 
