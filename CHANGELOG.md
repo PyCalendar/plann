@@ -8,10 +8,13 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 ### Added
 
 * `plann interactive check-pinned` goes through the past week's events pinning tasks to the calendar (as made by the panic planning in `interactive manage-tasks`) and asks if each task was done.  A done task is completed (with its subtasks), and its event is marked as confirmed; its other pins may be cancelled.  If not done, the event is cancelled.  It is also run first in `interactive manage-tasks`.  https://github.com/pycalendar/plann/pull/89
+* `select --priority` selects by priority: one number, a range or a list, like `--priority 5`, `--priority 1-3` or `--priority 1,5-9`.  0 matches tasks with no priority set.  The filtering is done client-side, and needs icalendar-searcher 1.4.0 or later.
 
 ### Fixed
 
+* Postponing (`edit --postpone`, `interactive manage-tasks`) left DTSTART behind on a task where DTSTART equals DUE, or where one of them is a date and the other a timestamp, so the duration (used as a time estimate) grew with every postponement.  DTSTART now moves along with DUE, keeping the duration.
 * `interactive manage-tasks`: a parent task postponed together with its child could be postponed once more in its own turn, and with caldav 3.6 this crashed with a "412 Precondition Failed" error.  It is now skipped, with a note.  A task changed on the server in the meantime is reloaded before it is postponed.
+* `select` no longer crashes with `KeyError: 'DTEND'` on a task where one of the start and due times is a date and the other a timestamp.  The date is now turned into a timestamp at midnight; before, a timestamp could also lose its time of day.
 * `interactive manage-tasks` no longer stops with a traceback when the server refuses to store a task it postpones, e.g. with "423 Locked" from a Xandikos server busy with another write.  The task is reported and the rest are still postponed.
 
 ## v1.3.0 - 2026-10-23

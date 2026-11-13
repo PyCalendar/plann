@@ -31,6 +31,7 @@ from plann.lib import (
     _component_type,
     _is_comma_list_attr,
     _list,
+    _normalize_start_end,
     _process_set_arg,
     _procrastinate,
     _RelativeCache,
@@ -94,7 +95,28 @@ def _sort_key_function(skey):
             return obj.icalendar_component.get(skey)
     return reverse, fkey
 
-def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=None, warn_on_missing_uid=True, sort_key=[], skip_parents=None, skip_children=None, limit=None, offset=None, freebusyhack=None, pinned_tasks=None, **kwargs_):
+def _parse_priority(spec):
+    """The priorities in ``spec``: a comma-separated list of numbers or
+    ranges, like ``5``, ``1-3`` or ``1,5-9``."""
+    wanted = set()
+    for part in spec.split(','):
+        rx = re.fullmatch(r'\s*(\d)\s*(?:-\s*(\d)\s*)?', part)
+        if not rx:
+            raise click.BadParameter(f"expected priorities 0-9 like 5, 1-3 or 1,5-9, got {spec!r}", param_hint='--priority')
+        lo, hi = sorted((int(rx.group(1)), int(rx.group(rx.lastindex))))
+        wanted.update(range(lo, hi + 1))
+    return wanted
+
+def _filter_priority(objs, wanted):
+    """Keep the objects with a PRIORITY in ``wanted``.  0 is RFC 5545
+    "undefined priority" and also matches a missing PRIORITY.  Done
+    client-side, as CalDAV searches have no integer comparison."""
+    searcher = Searcher()
+    searcher.add_property_filter('PRIORITY', wanted, operator='in')
+    return [obj for obj in objs
+            if searcher.check_component(obj) or (0 in wanted and 'PRIORITY' not in obj.icalendar_component)]
+
+def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=None, warn_on_missing_uid=True, sort_key=[], skip_parents=None, skip_children=None, limit=None, offset=None, freebusyhack=None, pinned_tasks=None, priority=None, **kwargs_):
     """
     select/search/filter tasks/events, for listing/editing/deleting, etc
     """
@@ -147,6 +169,10 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
     if uid:
         return
 
+    ## parsed before searching, so a typo costs no server round-trip
+    if priority is not None:
+        priority = _parse_priority(priority)
+
     if pinned_tasks:
         kwargs['event'] = True
         kwargs['todo'] = None
@@ -173,8 +199,14 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
 
     if 'start' in kwargs and 'end' in kwargs:
         kwargs['expand'] = True
+    found = []
     for c in ctx.obj['calendars']:
-        objs.extend(c.search(**kwargs))
+        found.extend(c.search(**kwargs))
+    ## with --pinned-tasks the search finds the pinning events, and the
+    ## priority filter waits for the tasks they pin, below
+    if priority is not None and pinned_tasks is None:
+        found = _filter_priority(found, priority)
+    objs.extend(found)
 
     if skip_children or skip_parents:
         i = 0
@@ -204,6 +236,8 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
                 children = _relships_by_type(obj, 'CHILD').get('CHILD',[])
                 if not any(x.icalendar_component.get('STATUS', '')!='CANCELLED' for x in children if isinstance(x, caldav.Event)):
                     ret_objs.append(obj)
+        if priority is not None:
+            ret_objs = _filter_priority(ret_objs, priority)
         ctx.obj['objs'] = ret_objs
 
     ## OPTIMIZE TODO: sorting the list multiple times rather than once is a bit of brute force, if there are several sort keys and long list of objects, we should sort once and consider all sort keys while sorting
@@ -222,11 +256,10 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
     for obj in ctx.obj['objs']:
         comp = obj.icalendar_component
         dtstart = comp.get('dtstart')
-        dtend = comp.get('dtend') or comp.get('due')
-        if dtstart and dtend and isinstance(dtstart.dt, datetime.datetime) != isinstance(dtend.dt, datetime.datetime):
+        endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
+        dtend = comp.get(endkey)
+        if _normalize_start_end(comp):
             logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
-            comp['dtstart'].dt = datetime.datetime(dtstart.dt.year, dtstart.dt.month, dtstart.dt.day)
-            comp['dtend'].dt = datetime.datetime(dtend.dt.year, dtend.dt.month, dtend.dt.day)
         elif dtstart and dtend and dtstart.dt > dtend.dt:
             logging.error(f"task with uuid {comp['uid']} as dtstart after dtend/due")
 
