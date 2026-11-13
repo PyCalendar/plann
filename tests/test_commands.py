@@ -72,6 +72,51 @@ def test_select_passes_priority_filter_not_to_server():
     assert [x.icalendar_component['UID'] for x in ctx.obj['objs']] == ['five']
 
 
+def test_select_fixes_mixed_date_types_on_todo_with_due():
+    """A task with a date DTSTART and a timestamp DUE (or vice versa) is
+    normalised to timestamps.  Tasks have DUE, not DTEND, so the fix-up
+    must touch whichever of the two is there."""
+    import datetime
+
+    from plann.commands import _select
+
+    todo = Todo(data=(
+        "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VTODO\nUID:mixed\nSUMMARY:mixed\n"
+        "DTSTART;VALUE=DATE:20261101\nDUE:20261110T120000\n"
+        "END:VTODO\nEND:VCALENDAR"))
+    cal = MagicMock()
+    cal.search.return_value = [todo]
+    ctx = MagicMock()
+    ctx.obj = {'calendars': [cal]}
+    _select(ctx, todo=True)
+    comp = ctx.obj['objs'][0].icalendar_component
+    assert 'DTEND' not in comp
+    assert isinstance(comp['DTSTART'].dt, datetime.datetime)
+    assert comp['DTSTART'].dt == datetime.datetime(2026, 11, 1)
+    assert comp['DUE'].dt == datetime.datetime(2026, 11, 10, 12)
+    assert b'VALUE=DATE' not in comp.to_ical()
+
+
+def test_select_fixes_mixed_date_types_keeping_the_timezone():
+    """The date becomes midnight in the timezone of the timestamp, or
+    the two cannot be compared (postponing then crashes in caldav)."""
+    import datetime
+
+    from plann.commands import _select
+
+    todo = Todo(data=(
+        "BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:VTODO\nUID:mixed\nSUMMARY:mixed\n"
+        "DTSTART;VALUE=DATE:20261101\nDUE:20261110T120000Z\n"
+        "END:VTODO\nEND:VCALENDAR"))
+    cal = MagicMock()
+    cal.search.return_value = [todo]
+    ctx = MagicMock()
+    ctx.obj = {'calendars': [cal]}
+    _select(ctx, todo=True)
+    comp = ctx.obj['objs'][0].icalendar_component
+    assert comp['DUE'].dt - comp['DTSTART'].dt == datetime.timedelta(days=9, hours=12)
+
+
 def test_select_priority_with_pinned_tasks_filters_the_tasks():
     """--pinned-tasks --todo searches the pinning events and returns their
     parent tasks; --priority is about the tasks, not the events."""
@@ -105,3 +150,42 @@ def test_select_rejects_bad_priority_before_searching():
         _select(ctx, todo=True, priority='high')
     cal.search.assert_not_called()
 
+
+def _fix_up(component, lines):
+    from caldav import Event
+
+    from plann.commands import _select
+
+    cls = Event if component == 'VEVENT' else Todo
+    obj = cls(data=(
+        f"BEGIN:VCALENDAR\nVERSION:2.0\nBEGIN:{component}\nUID:mixed\nSUMMARY:mixed\n"
+        f"{lines}END:{component}\nEND:VCALENDAR"))
+    cal = MagicMock()
+    cal.search.return_value = [obj]
+    ctx = MagicMock()
+    ctx.obj = {'calendars': [cal]}
+    _select(ctx)
+    return ctx.obj['objs'][0].icalendar_component
+
+
+def test_select_fixes_mixed_date_types_timestamp_start_date_due():
+    import datetime
+
+    comp = _fix_up('VTODO', "DTSTART:20261101T090000\nDUE;VALUE=DATE:20261110\n")
+    assert comp['DTSTART'].dt == datetime.datetime(2026, 11, 1, 9)
+    assert comp['DUE'].dt == datetime.datetime(2026, 11, 10)
+
+
+def test_select_fixes_mixed_date_types_on_event():
+    import datetime
+
+    comp = _fix_up('VEVENT', "DTSTART;VALUE=DATE:20261101\nDTEND:20261101T120000\n")
+    assert 'DUE' not in comp
+    assert comp['DTSTART'].dt == datetime.datetime(2026, 11, 1)
+    assert comp['DTEND'].dt == datetime.datetime(2026, 11, 1, 12)
+
+
+def test_select_fixes_mixed_date_types_with_tzid():
+    """The converted property gets the TZID of the other one."""
+    comp = _fix_up('VTODO', "DTSTART;VALUE=DATE:20261101\nDUE;TZID=Europe/Oslo:20261110T120000\n")
+    assert b'DTSTART;TZID=Europe/Oslo:20261101T000000' in comp.to_ical()
