@@ -8,6 +8,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 ### Added
 
 * `plann interactive check-pinned` goes through the past week's events pinning tasks to the calendar (as made by the panic planning in `interactive manage-tasks`) and asks if each task was done.  A done task is completed (with its subtasks), and its event is marked as confirmed; its other pins may be cancelled.  If not done, the event is cancelled.  It is also run first in `interactive manage-tasks`.  https://github.com/pycalendar/plann/pull/89
+* `select --priority` selects by priority: one number, a range or a list, like `--priority 5`, `--priority 1-3` or `--priority 1,5-9`.  0 matches tasks with no priority set.  The filtering is done client-side, and needs icalendar-searcher 1.4.0 or later.
 
 ### Fixed
 

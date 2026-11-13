@@ -353,6 +353,7 @@ def freebusy_sync(ctx, to_section, summary, tag, days, hours, weekdays_only, dry
 @click.option('--offset', help='Skip the first objects', type=int)
 @click.option('--freebusyhack', help='DEPRECATED, use the freebusy-sync command.  Removes almost everything from the ical and replaces the summary with the provided string.  Leaks the details of recurrence exceptions.')
 @click.option('--pinned-tasks/--no-pinned-tasks', default=None, help='select all/no pinned tasks')
+@click.option('--priority', help='select by priority: a number, a range or a list, like 5, 1-3 or 1,5-9.  1 is the highest priority, 9 the lowest, 0 undefined (also matches tasks without a priority)')
 @click.pass_context
 def select(*largs, **kwargs):
     """Search command, allows listing, editing, etc

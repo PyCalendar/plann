@@ -345,7 +345,7 @@ To interactively find and set the missing properties, it's possible to do `plann
 
 ### Listing tasks
 
-The `select`-command can be used to list tasks.  The `--todo`-flag will ensure that only pending tasks are listed.  Say that it's a nice day for garden work, then `plann select --todo --category garden list` would probably be the right thing to do.
+The `select`-command can be used to list tasks.  The `--todo`-flag will ensure that only pending tasks are listed.  Say that it's a nice day for garden work, then `plann select --todo --category garden list` would probably be the right thing to do.  `--priority` selects by priority, like `plann select --todo --priority 1-3 list` for the most important tasks (`--priority 0` gives the tasks with no priority set).
 
 There exists some other ways too.  `plann agenda` will list out events and tasks with `DTSTART` in the near-term future.  `plann interactive check-due` will go through overdue and near-due tasks and interactively ask the user what to do with them.  Then there is also the "panic planning mode" available, for instance `plann interactive dismiss-panic` - it will list overdue tasks and tasks that you probably won't have time to do within the planned `DUE`.  More on that below.
 
