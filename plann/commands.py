@@ -33,6 +33,7 @@ from plann.lib import (
     _comma_list_tokens,
     _complete,
     _component_type,
+    _fix_mismatched_date_types,
     _is_comma_list_attr,
     _list,
     _process_set_arg,
@@ -306,42 +307,6 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
                     del comp[attr]
                 if attr == 'SUMMARY':
                     comp[attr] = freebusyhack
-
-def _fix_mismatched_date_types(comp):
-    """If one of DTSTART and DTEND/DUE is a date and the other a timestamp,
-    turn the date into a timestamp at midnight, so they can be compared: in
-    the timezone of the timestamp if it has a named one (TZID), floating if
-    it is floating, and in the implicit timezone if it is in UTC (also a
-    TZID naming UTC).  The time
-    of day on the timestamp is kept.  Logs an error if DTSTART comes after
-    DTEND/DUE."""
-    endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
-    dtstart = comp.get('DTSTART')
-    dtend = comp.get(endkey)
-    if not (dtstart and dtend):
-        return
-    start_is_ts = isinstance(dtstart.dt, datetime.datetime)
-    if start_is_ts != isinstance(dtend.dt, datetime.datetime):
-        logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
-        date_key, d, other_key, other = (endkey, dtend, 'DTSTART', dtstart) if start_is_ts else ('DTSTART', dtstart, endkey, dtend)
-        d = d.dt
-        tz = other.dt.tzinfo
-        is_utc = tz is datetime.timezone.utc or str(tz) in ('UTC', 'Etc/UTC', 'Etc/Zulu', 'Zulu', 'Etc/UCT', 'UCT')
-        new_ts = datetime.datetime(d.year, d.month, d.day)
-        if tz and 'TZID' in other.params and not is_utc:
-            new_ts = new_ts.replace(tzinfo=tz)
-            ## re-add the other one too, so icalendar writes its own name for
-            ## the timezone (e.g. Europe/Berlin for "W. Europe Standard Time")
-            ## in both properties
-            comp.pop(other_key)
-            comp.add(other_key, other.dt)
-        elif tz:
-            new_ts = _ensure_ts(d)
-        ## replace the property rather than setting .dt, so VALUE=DATE goes away
-        comp.pop(date_key)
-        comp.add(date_key, new_ts)
-    if _ensure_ts(comp['DTSTART'].dt) > _ensure_ts(comp[endkey].dt):
-        logging.error(f"task with uuid {comp['uid']} has dtstart after dtend/due")
 
 def _categories_in_use(objs):
     categories = set()

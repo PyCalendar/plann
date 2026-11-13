@@ -213,7 +213,7 @@ def test_mismatched_date_types_fixed_on_due(monkeypatch):
     from zoneinfo import ZoneInfo
 
     from plann import timespec
-    from plann.commands import _fix_mismatched_date_types
+    from plann.lib import _fix_mismatched_date_types
 
     monkeypatch.setitem(vars(timespec.tz), "_implicit_timezone", ZoneInfo("America/New_York"))
     comp = _vtodo('mixed', "DTSTART;VALUE=DATE:20261116\nDUE:20261118T140000Z\n").icalendar_component
@@ -230,7 +230,7 @@ def test_mismatched_date_types_floating_stays_floating():
     floating midnight too"""
     import datetime
 
-    from plann.commands import _fix_mismatched_date_types
+    from plann.lib import _fix_mismatched_date_types
 
     comp = _vtodo('floating', "DTSTART:20261116T100000\nDUE;VALUE=DATE:20261118\n").icalendar_component
     _fix_mismatched_date_types(comp)
@@ -240,7 +240,7 @@ def test_mismatched_date_types_floating_stays_floating():
 def test_aware_vs_floating_does_not_crash(caplog):
     """A floating DTSTART and a UTC DUE cannot be compared directly - but
     the check still works, and reports a DTSTART after the DUE"""
-    from plann.commands import _fix_mismatched_date_types
+    from plann.lib import _fix_mismatched_date_types
 
     comp = _vtodo('aware-floating', "DTSTART:20261119T100000\nDUE:20261118T140000Z\n").icalendar_component
     _fix_mismatched_date_types(comp)
@@ -250,7 +250,7 @@ def test_aware_vs_floating_does_not_crash(caplog):
 def test_mismatched_date_types_keeps_the_tzid():
     """With a named timezone on the other side, the date becomes midnight in
     that timezone, not in the implicit one, so the task keeps one timezone"""
-    from plann.commands import _fix_mismatched_date_types
+    from plann.lib import _fix_mismatched_date_types
 
     comp = _vtodo('tzid', "DTSTART;VALUE=DATE:20261101\nDUE;TZID=America/New_York:20261110T120000\n").icalendar_component
     _fix_mismatched_date_types(comp)
@@ -268,7 +268,7 @@ def test_mismatched_date_types_utc_tzid_is_utc(monkeypatch):
     from zoneinfo import ZoneInfo
 
     from plann import timespec
-    from plann.commands import _fix_mismatched_date_types
+    from plann.lib import _fix_mismatched_date_types
 
     monkeypatch.setitem(vars(timespec.tz), "_implicit_timezone", ZoneInfo("America/New_York"))
     for tzid in ('UTC', 'Etc/UTC'):
@@ -280,7 +280,7 @@ def test_mismatched_date_types_utc_tzid_is_utc(monkeypatch):
 def test_mismatched_date_types_one_tzid_name():
     """A TZID that icalendar knows under another name (a Windows name) is
     written under that name in both properties, not in one of them only"""
-    from plann.commands import _fix_mismatched_date_types
+    from plann.lib import _fix_mismatched_date_types
 
     comp = _vtodo('windows', "DTSTART;VALUE=DATE:20261101\nDUE;TZID=W. Europe Standard Time:20261110T120000\n").icalendar_component
     _fix_mismatched_date_types(comp)
@@ -292,7 +292,7 @@ def test_mismatched_date_types_one_tzid_name():
 def test_mismatched_date_types_still_checks_the_order(caplog):
     """After the date is made a timestamp, a DTSTART after the DUE is still
     reported"""
-    from plann.commands import _fix_mismatched_date_types
+    from plann.lib import _fix_mismatched_date_types
 
     comp = _vtodo('late', "DTSTART;VALUE=DATE:20261201\nDUE;TZID=Europe/Oslo:20261110T120000\n").icalendar_component
     _fix_mismatched_date_types(comp)

@@ -299,6 +299,43 @@ def _summary(obj):
     i = _icalendar_component(obj)
     return i.get('summary') or i.get('description') or i.get('uid')
 
+def _fix_mismatched_date_types(comp):
+    """If one of DTSTART and DTEND/DUE is a date and the other a timestamp,
+    turn the date into a timestamp at midnight, so they can be compared: in
+    the timezone of the timestamp if it has a named one (TZID), floating if
+    it is floating, and in the implicit timezone if it is in UTC (also a
+    TZID naming UTC).  The time
+    of day on the timestamp is kept.  Logs an error if DTSTART comes after
+    DTEND/DUE."""
+    endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
+    dtstart = comp.get('DTSTART')
+    dtend = comp.get(endkey)
+    if not (dtstart and dtend):
+        return
+    start_is_ts = isinstance(dtstart.dt, datetime.datetime)
+    if start_is_ts != isinstance(dtend.dt, datetime.datetime):
+        logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
+        date_key, d, other_key, other = (endkey, dtend, 'DTSTART', dtstart) if start_is_ts else ('DTSTART', dtstart, endkey, dtend)
+        d = d.dt
+        tz = other.dt.tzinfo
+        is_utc = tz is datetime.timezone.utc or str(tz) in ('UTC', 'Etc/UTC', 'Etc/Zulu', 'Zulu', 'Etc/UCT', 'UCT')
+        new_ts = datetime.datetime(d.year, d.month, d.day)
+        if tz and 'TZID' in other.params and not is_utc:
+            new_ts = new_ts.replace(tzinfo=tz)
+            ## re-add the other one too, so icalendar writes its own name for
+            ## the timezone (e.g. Europe/Berlin for "W. Europe Standard Time")
+            ## in both properties
+            comp.pop(other_key)
+            comp.add(other_key, other.dt)
+        elif tz:
+            new_ts = _ensure_ts(d)
+        ## replace the property rather than setting .dt, so VALUE=DATE goes away
+        comp.pop(date_key)
+        comp.add(date_key, new_ts)
+    if _ensure_ts(comp['DTSTART'].dt) > _ensure_ts(comp[endkey].dt):
+        logging.error(f"task with uuid {comp['uid']} has dtstart after dtend/due")
+
+
 childlike = {'CHILD', 'NEXT', 'FINISHTOSTART'}
 parentlike = {'PARENT', 'FIRST', 'DEPENDS-ON', 'STARTTOFINISH'}
 
@@ -357,7 +394,16 @@ def _procrastinate(objs, delay, check_dependent="error", with_children=False, wi
             ## Let's force the due to be a timestamp
             if not isinstance(new_due, datetime.datetime):
                 new_due = datetime.datetime(new_due.year, new_due.month, new_due.day)
+        comp = x.icalendar_component
+        _fix_mismatched_date_types(comp)
+        ## caldav leaves DTSTART alone if the duration is zero; a negative
+        ## one (DTSTART after DUE) is treated the same, so it is not saved
+        zero_duration = 'DTSTART' in comp and any(k in comp for k in ('DUE', 'DTEND', 'DURATION')) and x.get_duration() <= datetime.timedelta(0)
         parent = x.set_due(new_due, move_dtstart=True, check_dependent=chk_parent)
+        if zero_duration and not parent:
+            comp.pop('DTSTART')
+            ## set_due may have converted a naive new_due, DTSTART must match DUE
+            comp.add('DTSTART', comp['DUE'].dt)
         if parent:
             if check_dependent in ("error", "interactive"):
                 i = x.icalendar_component
