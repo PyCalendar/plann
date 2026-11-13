@@ -31,6 +31,7 @@ from plann.lib import (
     _component_type,
     _is_comma_list_attr,
     _list,
+    _normalize_start_end,
     _process_set_arg,
     _procrastinate,
     _RelativeCache,
@@ -257,17 +258,8 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
         dtstart = comp.get('dtstart')
         endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
         dtend = comp.get(endkey)
-        if dtstart and dtend and isinstance(dtstart.dt, datetime.datetime) != isinstance(dtend.dt, datetime.datetime):
+        if _normalize_start_end(comp):
             logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
-            ## only the date-valued one is converted, to midnight in the
-            ## timezone of the other, which keeps its time
-            tzinfo = next(comp[key].dt.tzinfo for key in ('DTSTART', endkey)
-                          if isinstance(comp[key].dt, datetime.datetime))
-            for key in ('DTSTART', endkey):
-                dt = comp[key].dt
-                if not isinstance(dt, datetime.datetime):
-                    comp.pop(key)
-                    comp.add(key, datetime.datetime(dt.year, dt.month, dt.day, tzinfo=tzinfo))
         elif dtstart and dtend and dtstart.dt > dtend.dt:
             logging.error(f"task with uuid {comp['uid']} as dtstart after dtend/due")
 

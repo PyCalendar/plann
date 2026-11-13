@@ -299,6 +299,25 @@ def _summary(obj):
     i = _icalendar_component(obj)
     return i.get('summary') or i.get('description') or i.get('uid')
 
+def _normalize_start_end(comp):
+    """DTSTART and DTEND/DUE of mixed types (date and timestamp) makes
+    durations meaningless.  Only the date-valued one is converted, to
+    midnight in the timezone of the other, which keeps its time.
+    Returns True if something was changed."""
+    dtstart = comp.get('DTSTART')
+    endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
+    dtend = comp.get(endkey)
+    if not (dtstart and dtend) or isinstance(dtstart.dt, datetime.datetime) == isinstance(dtend.dt, datetime.datetime):
+        return False
+    tzinfo = next(comp[key].dt.tzinfo for key in ('DTSTART', endkey)
+                  if isinstance(comp[key].dt, datetime.datetime))
+    for key in ('DTSTART', endkey):
+        dt = comp[key].dt
+        if not isinstance(dt, datetime.datetime):
+            comp.pop(key)
+            comp.add(key, datetime.datetime(dt.year, dt.month, dt.day, tzinfo=tzinfo))
+    return True
+
 childlike = {'CHILD', 'NEXT', 'FINISHTOSTART'}
 parentlike = {'PARENT', 'FIRST', 'DEPENDS-ON', 'STARTTOFINISH'}
 
@@ -357,7 +376,15 @@ def _procrastinate(objs, delay, check_dependent="error", with_children=False, wi
             ## Let's force the due to be a timestamp
             if not isinstance(new_due, datetime.datetime):
                 new_due = datetime.datetime(new_due.year, new_due.month, new_due.day)
+        comp = x.icalendar_component
+        _normalize_start_end(comp)
+        ## caldav leaves DTSTART alone if the duration is zero
+        zero_duration = 'DTSTART' in comp and any(k in comp for k in ('DUE', 'DTEND', 'DURATION')) and x.get_duration() == datetime.timedelta(0)
         parent = x.set_due(new_due, move_dtstart=True, check_dependent=chk_parent)
+        if zero_duration and not parent:
+            comp.pop('DTSTART')
+            ## set_due may have converted a naive new_due, DTSTART must match DUE
+            comp.add('DTSTART', comp['DUE'].dt)
         if parent:
             if check_dependent in ("error", "interactive"):
                 i = x.icalendar_component

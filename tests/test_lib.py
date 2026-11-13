@@ -959,3 +959,46 @@ def test_list_json_one_vtimezone_per_tzid():
         _list([_event_in_oslo('a'), _event_in_oslo('b')], as_json=True)
     names = [comp[0] for comp in json.loads(echo.call_args.args[0])[2]]
     assert names == ['vtimezone', 'vevent', 'vevent']
+
+def _todo_with(dtstart_line, end_line):
+    t = Todo()
+    t.data = ("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:x\nBEGIN:VTODO\nUID:a\nDTSTAMP:20261101T000000Z\n"
+              f"SUMMARY:x\n{dtstart_line}\n{end_line}\nEND:VTODO\nEND:VCALENDAR\n")
+    return t
+
+@pytest.mark.parametrize("dtstart_line,end_line,hours", [
+    ## date-valued DTSTART on the same day as a timestamp DUE
+    ("DTSTART;VALUE=DATE:20261101", "DUE:20261101T120000Z", 12),
+    ("DTSTART;VALUE=DATE:20261101", "DUE:20261102T120000Z", 36),
+    ## DTSTART == DUE
+    ("DTSTART:20261101T120000Z", "DUE:20261101T120000Z", 0),
+    ("DTSTART:20261101T100000Z", "DUE:20261101T120000Z", 2),
+])
+def test_procrastinate_moves_dtstart(dtstart_line, end_line, hours):
+    _check_moves_dtstart(dtstart_line, end_line, hours, '14d')
+
+def test_procrastinate_zero_duration_to_absolute_date():
+    """a naive postpone target must not leave DTSTART floating next to a UTC DUE"""
+    t = _todo_with("DTSTART:20261101T120000Z", "DUE:20261101T120000Z")
+    with patch.object(t, 'save'):
+        _procrastinate([t], '2027-01-05')
+    comp = t.icalendar_component
+    assert comp['DTSTART'].dt == comp['DUE'].dt
+    assert t.get_duration() == timedelta(0)
+
+def test_procrastinate_dtstart_only_left_alone():
+    t = _todo_with("DTSTART:20261101T120000Z", "SUMMARY:y")
+    with patch.object(t, 'save'):
+        _procrastinate([t], '14d')
+    assert t.icalendar_component['DTSTART'].dt == datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+
+def _check_moves_dtstart(dtstart_line, end_line, hours, delay):
+    """DTSTART moves along with DUE, keeping the duration (which is
+    used as a time estimate), also when the duration is zero or the
+    DTSTART is a date and the DUE a timestamp"""
+    t = _todo_with(dtstart_line, end_line)
+    with patch.object(t, 'save'):
+        _procrastinate([t], delay)
+    comp = t.icalendar_component
+    assert comp['DUE'].dt - comp['DTSTART'].dt == timedelta(hours=hours)
+    assert comp['DTSTART'].dt > datetime.now(timezone.utc)
