@@ -220,15 +220,7 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
 
     ## some sanity checks
     for obj in ctx.obj['objs']:
-        comp = obj.icalendar_component
-        dtstart = comp.get('dtstart')
-        dtend = comp.get('dtend') or comp.get('due')
-        if dtstart and dtend and isinstance(dtstart.dt, datetime.datetime) != isinstance(dtend.dt, datetime.datetime):
-            logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
-            comp['dtstart'].dt = datetime.datetime(dtstart.dt.year, dtstart.dt.month, dtstart.dt.day)
-            comp['dtend'].dt = datetime.datetime(dtend.dt.year, dtend.dt.month, dtend.dt.day)
-        elif dtstart and dtend and dtstart.dt > dtend.dt:
-            logging.error(f"task with uuid {comp['uid']} as dtstart after dtend/due")
+        _fix_mismatched_date_types(obj.icalendar_component)
 
     ## I need a way to copy time information from one calendar to another
     ## (typically between private and work calendars) without carrying over
@@ -243,6 +235,30 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
                     del comp[attr]
                 if attr == 'SUMMARY':
                     comp[attr] = freebusyhack
+
+def _fix_mismatched_date_types(comp):
+    """If one of DTSTART and DTEND/DUE is a date and the other a timestamp,
+    turn the date into a timestamp at midnight in the implicit timezone
+    (floating, if the timestamp is floating), so they can be compared.  The
+    time of day on the timestamp is kept.  Logs an error if DTSTART comes
+    after DTEND/DUE."""
+    endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
+    dtstart = comp.get('DTSTART')
+    dtend = comp.get(endkey)
+    if not (dtstart and dtend):
+        return
+    start_is_ts = isinstance(dtstart.dt, datetime.datetime)
+    if start_is_ts != isinstance(dtend.dt, datetime.datetime):
+        logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
+        date_key, d, other = (endkey, dtend.dt, dtstart.dt) if start_is_ts else ('DTSTART', dtstart.dt, dtend.dt)
+        new_ts = datetime.datetime(d.year, d.month, d.day)
+        if other.tzinfo:
+            new_ts = _ensure_ts(d)
+        ## replace the property rather than setting .dt, so VALUE=DATE goes away
+        comp.pop(date_key)
+        comp.add(date_key, new_ts)
+    elif _ensure_ts(dtstart.dt) > _ensure_ts(dtend.dt):
+        logging.error(f"task with uuid {comp['uid']} as dtstart after dtend/due")
 
 def _categories_in_use(objs):
     categories = set()
