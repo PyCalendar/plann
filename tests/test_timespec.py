@@ -240,6 +240,26 @@ class TestNaturalLanguage:
         with pytest.raises(ValueError):
             parse_dt("not a date at all !!!!")
 
+    @pytest.mark.parametrize("hour", ["0", "9", "09", "14", "23"])
+    def test_bare_hour(self, hour):
+        """A bare number 0-23 is an hour today in the implicit timezone,
+        not a day of the month (``--set-dtstart=14`` means 14:00)"""
+        tz.implicit_timezone = "Europe/Oslo"
+        result = parse_dt(hour)
+        assert result == datetime.now(OSLO).replace(
+            hour=int(hour), minute=0, second=0, microsecond=0)
+
+    def test_bare_number_with_leading_zeros_is_not_an_hour(self):
+        """Only one or two digits are an hour; "0001" is something else"""
+        tz.implicit_timezone = "Europe/Oslo"
+        result = parse_dt("0001")
+        assert not (isinstance(result, datetime) and result.date() == datetime.now(OSLO).date() and result.hour == 1)
+
+    def test_bare_day_of_month(self):
+        """Numbers that cannot be an hour are still a day of the month"""
+        tz.implicit_timezone = "Europe/Oslo"
+        assert parse_dt("28").day == 28
+
 
 class TestDurationGrammar:
     """The [smhdwy] relative-duration grammar is centralised in timespec.py."""
