@@ -65,6 +65,32 @@ class _FakeCtx:
         self.obj = {'calendars': [], 'objs': []}
 
 
+def _check_due_with(todos, limit):
+    """run _check_due over the given todos, return the ones it asks about"""
+    def select(ctx, **kwargs):
+        assert 'limit' not in kwargs, "the limit should apply after the client side filtering"
+        ctx.obj['objs'] = list(todos)
+    asked = []
+    with patch.object(commands_mod, '_select', select), \
+         patch.object(commands_mod, '_interactive_edit', asked.append):
+        commands_mod._check_due(_FakeCtx(), limit=limit)
+    return asked
+
+
+def test_check_due_warns_when_tasks_are_left_out(capsys):
+    todos = [_make_todo(f"t{i}", due=True, dtstart=True) for i in range(5)]
+    assert _check_due_with(todos, limit=3) == todos[:3]
+    out = capsys.readouterr().out
+    assert '5 tasks are due' in out
+    assert 'dismiss-panic' in out
+
+
+def test_check_due_no_warning_within_limit(capsys):
+    todos = [_make_todo(f"t{i}", due=True, dtstart=True) for i in range(3)]
+    assert _check_due_with(todos, limit=3) == todos
+    assert capsys.readouterr().out == ''
+
+
 def test_todos_missing():
     """_todos_missing keeps only the tasks where the property is absent."""
     with_cat = _make_todo('a', category=True)

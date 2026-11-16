@@ -555,17 +555,19 @@ def _agenda(ctx):
 
 def _check_due(ctx, limit=16, lookahead='24h'):
     end_ = parse_add_dur(datetime.datetime.now(), lookahead)
-    _select(ctx=ctx, todo=True, end=end_, limit=limit, sort_key=['{PRIORITY:?0?} {DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}'])
-    objs = ctx.obj['objs']
-    for obj in objs:
+    _select(ctx=ctx, todo=True, end=end_, sort_key=['{PRIORITY:?0?} {DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}'])
+    def is_due(obj):
         ## client side filtering in case the server returns too much
         ## TODO: should be moved to the caldav library
-        ## TODO: consider the limit ... we may risk that nothing comes up due to the limit above
         comp = obj.icalendar_component
-        dtstart = comp.get('dtstart') or comp.get('due')
-        dtstart = _ensure_ts(dtstart)
-        if dtstart.strftime("%F%H%M") > end_.strftime("%F%H%M"):
-            continue
+        dtstart = _ensure_ts(comp.get('dtstart') or comp.get('due'))
+        return dtstart.strftime("%F%H%M") <= end_.strftime("%F%H%M")
+    objs = [obj for obj in ctx.obj['objs'] if is_due(obj)]
+    if limit is not None and len(objs) > limit:
+        click.echo(f"{len(objs)} tasks are due, only the first {limit} are shown here.  "
+                   "Consider postponing many at once with `plann interactive dismiss-panic`.")
+        objs = objs[:limit]
+    for obj in objs:
         _interactive_edit(obj)
 
 def _pinned_task_parents(event):
