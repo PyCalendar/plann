@@ -220,15 +220,7 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
 
     ## some sanity checks
     for obj in ctx.obj['objs']:
-        comp = obj.icalendar_component
-        dtstart = comp.get('dtstart')
-        dtend = comp.get('dtend') or comp.get('due')
-        if dtstart and dtend and isinstance(dtstart.dt, datetime.datetime) != isinstance(dtend.dt, datetime.datetime):
-            logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
-            comp['dtstart'].dt = datetime.datetime(dtstart.dt.year, dtstart.dt.month, dtstart.dt.day)
-            comp['dtend'].dt = datetime.datetime(dtend.dt.year, dtend.dt.month, dtend.dt.day)
-        elif dtstart and dtend and dtstart.dt > dtend.dt:
-            logging.error(f"task with uuid {comp['uid']} as dtstart after dtend/due")
+        _fix_mismatched_date_types(obj.icalendar_component)
 
     ## I need a way to copy time information from one calendar to another
     ## (typically between private and work calendars) without carrying over
@@ -243,6 +235,30 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
                     del comp[attr]
                 if attr == 'SUMMARY':
                     comp[attr] = freebusyhack
+
+def _fix_mismatched_date_types(comp):
+    """If one of DTSTART and DTEND/DUE is a date and the other a timestamp,
+    turn the date into a timestamp at midnight in the implicit timezone
+    (floating, if the timestamp is floating), so they can be compared.  The
+    time of day on the timestamp is kept.  Logs an error if DTSTART comes
+    after DTEND/DUE."""
+    endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
+    dtstart = comp.get('DTSTART')
+    dtend = comp.get(endkey)
+    if not (dtstart and dtend):
+        return
+    start_is_ts = isinstance(dtstart.dt, datetime.datetime)
+    if start_is_ts != isinstance(dtend.dt, datetime.datetime):
+        logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
+        date_key, d, other = (endkey, dtend.dt, dtstart.dt) if start_is_ts else ('DTSTART', dtstart.dt, dtend.dt)
+        new_ts = datetime.datetime(d.year, d.month, d.day)
+        if other.tzinfo:
+            new_ts = _ensure_ts(d)
+        ## replace the property rather than setting .dt, so VALUE=DATE goes away
+        comp.pop(date_key)
+        comp.add(date_key, new_ts)
+    elif _ensure_ts(dtstart.dt) > _ensure_ts(dtend.dt):
+        logging.error(f"task with uuid {comp['uid']} as dtstart after dtend/due")
 
 def _categories_in_use(objs):
     categories = set()
@@ -490,17 +506,19 @@ def _agenda(ctx):
 
 def _check_due(ctx, limit=16, lookahead='24h'):
     end_ = parse_add_dur(datetime.datetime.now(), lookahead)
-    _select(ctx=ctx, todo=True, end=end_, limit=limit, sort_key=['{PRIORITY:?0?} {DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}'])
-    objs = ctx.obj['objs']
-    for obj in objs:
+    _select(ctx=ctx, todo=True, end=end_, sort_key=['{PRIORITY:?0?} {DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}'])
+    def is_due(obj):
         ## client side filtering in case the server returns too much
         ## TODO: should be moved to the caldav library
-        ## TODO: consider the limit ... we may risk that nothing comes up due to the limit above
         comp = obj.icalendar_component
-        dtstart = comp.get('dtstart') or comp.get('due')
-        dtstart = _ensure_ts(dtstart)
-        if dtstart.strftime("%F%H%M") > end_.strftime("%F%H%M"):
-            continue
+        dtstart = _ensure_ts(comp.get('dtstart') or comp.get('due'))
+        return dtstart.strftime("%F%H%M") <= end_.strftime("%F%H%M")
+    objs = [obj for obj in ctx.obj['objs'] if is_due(obj)]
+    if limit is not None and len(objs) > limit:
+        click.echo(f"{len(objs)} tasks are due, only the first {limit} are shown here.  "
+                   "Consider postponing many at once with `plann interactive dismiss-panic`.")
+        objs = objs[:limit]
+    for obj in objs:
         _interactive_edit(obj)
 
 def _pinned_task_parents(event):

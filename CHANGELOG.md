@@ -9,8 +9,15 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 * `plann interactive check-pinned` goes through the past week's events pinning tasks to the calendar (as made by the panic planning in `interactive manage-tasks`) and asks if each task was done.  A done task is completed (with its subtasks), and its event is marked as confirmed; its other pins may be cancelled.  If not done, the event is cancelled.  It is also run first in `interactive manage-tasks`.  https://github.com/pycalendar/plann/pull/89
 
+### Changed
+
+* The `plann interactive` subcommands now have the same defaults as when `interactive manage-tasks` runs them, except `dismiss-panic --hours-per-day`, which `manage-tasks` runs with 24 and then 14.  `check-due` looks 24 hours ahead (was 16) and goes through at most 16 tasks (was unlimited); `split-huge-tasks` and `split-high-pri-tasks` look 60 days and 640 tasks ahead (was 30 days and 32 tasks).
+
 ### Fixed
 
+* A task with DTSTART as a date and DUE as a timestamp (or the other way around) made `interactive manage-tasks` and other selections crash with `KeyError: 'DTEND'`.  The date is now made a timestamp at local midnight; the time of day on the other one is kept (it used to be dropped), and the result is valid iCalendar.
+* `interactive check-due` (also run by `interactive manage-tasks`) silently left out the due tasks beyond the first 16, usually the low-priority ones.  It now says how many tasks are due when it cannot show them all.
+* A bare hour (one or two digits, 0-23) in a date or time argument, like `--set-dtstart=14`, means 14:00 today in the implicit timezone.  It was taken as the 14th of the month, giving an all-day task.
 * `interactive manage-tasks`: a parent task postponed together with its child could be postponed once more in its own turn, and with caldav 3.6 this crashed with a "412 Precondition Failed" error.  It is now skipped, with a note.  A task changed on the server in the meantime is reloaded before it is postponed.
 * `interactive manage-tasks` no longer stops with a traceback when the server refuses to store a task it postpones, e.g. with "423 Locked" from a Xandikos server busy with another write.  The task is reported and the rest are still postponed.
 

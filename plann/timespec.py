@@ -122,6 +122,11 @@ def _parse_dt(input, return_type=None):
         return input
     if input == 'now':
         ret = _now()
+    elif input.isdigit() and len(input) <= 2 and int(input) < 24:
+        ## a bare hour, i.e. `--set-dtstart=14` means 14:00 today.
+        ## dateparser would take it as a day of the month.
+        ret = _now().replace(hour=int(input), minute=0, second=0, microsecond=0)
+        return ret.date() if return_type is datetime.date else ret
     elif input.startswith('+'):
         ret = parse_add_dur(_now(), input[1:])
     else:
