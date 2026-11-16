@@ -9,6 +9,10 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 * `plann interactive check-pinned` goes through the past week's events pinning tasks to the calendar (as made by the panic planning in `interactive manage-tasks`) and asks if each task was done.  A done task is completed (with its subtasks), and its event is marked as confirmed; its other pins may be cancelled.  If not done, the event is cancelled.  It is also run first in `interactive manage-tasks`.  https://github.com/pycalendar/plann/pull/89
 
+### Changed
+
+* The `plann interactive` subcommands now have the same defaults as when `interactive manage-tasks` runs them, except `dismiss-panic --hours-per-day`, which `manage-tasks` runs with 24 and then 14.  `check-due` looks 24 hours ahead (was 16) and goes through at most 16 tasks (was unlimited); `split-huge-tasks` and `split-high-pri-tasks` look 60 days and 640 tasks ahead (was 30 days and 32 tasks).
+
 ### Fixed
 
 * `interactive manage-tasks`: a parent task postponed together with its child could be postponed once more in its own turn, and with caldav 3.6 this crashed with a "412 Precondition Failed" error.  It is now skipped, with a note.  A task changed on the server in the meantime is reloaded before it is postponed.
