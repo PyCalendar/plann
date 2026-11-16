@@ -11,6 +11,10 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 * A warning when the singular `--set-category`, `--add-category` or `--add-resource` is given a value with a comma in it, like `--set-category=boat,keyboard`, and when a plural option like `--set-categories` is given more than once with a comma in a value.  Both give one category named `boat,keyboard`, while a single `--set-categories=boat,keyboard` gives two.  The behaviour itself is unchanged (it is intended), but is now documented in the user guide.
 * `plann interactive check-pinned` goes through the past week's events pinning tasks to the calendar (as made by the panic planning in `interactive manage-tasks`) and asks if each task was done.  A done task is completed (with its subtasks), and its event is marked as confirmed; its other pins may be cancelled.  If not done, the event is cancelled.  It is also run first in `interactive manage-tasks`.  https://github.com/pycalendar/plann/pull/89
 
+### Changed
+
+* The `plann interactive` subcommands now have the same defaults as when `interactive manage-tasks` runs them, except `dismiss-panic --hours-per-day`, which `manage-tasks` runs with 24 and then 14.  `check-due` looks 24 hours ahead (was 16) and goes through at most 16 tasks (was unlimited); `split-huge-tasks` and `split-high-pri-tasks` look 60 days and 640 tasks ahead (was 30 days and 32 tasks).
+
 ### Fixed
 
 * `plann add -l LINE event` dropped the extra iCalendar lines; they are now added to the event, as they were to tasks and journals.
