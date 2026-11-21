@@ -22,7 +22,7 @@ from caldav.lib.error import PutError
 from xandikos.web import SingleUserFilesystemBackend, XandikosApp
 
 from plann.cli import _add_journal, _add_todo, _check_for_panic, _list, _select
-from plann.commands import _add_event, _check_pinned, _set_event_status
+from plann.commands import _add_event, _check_pinned, _edit, _set_event_status
 from plann.interactive import (
     _interactive_edit,
     _interactive_relation_edit,
@@ -655,6 +655,39 @@ def _run_check_pinned_tests(calendars):
     assert status(mow) == 'COMPLETED'
     assert status(ev_mow) == 'TENTATIVE'
     assert status(ev_mow_future) == 'CANCELLED'
+
+def test_complete_several_sibling_tasks_by_uid():
+    """`select --todo --uid A --uid B --uid C complete` on three children
+    of one parent completes all three.  It was once seen to complete A
+    and B and then crash in caldav with an AssertionError
+    (`assert self.is_pending(i)`), while C alone completed fine."""
+    conn_details = start_xandikos_server()
+    try:
+        with caldav.get_calendars(
+            url=conn_details['caldav_url'],
+            username=conn_details['caldav_user'],
+            password=conn_details['caldav_password'],
+            raise_errors=True,
+        ) as calendars:
+            ctx = MagicMock()
+            ctx.obj = dict()
+            ctx.obj['calendars'] = list(calendars)
+            _add_todo(ctx, summary=['parent'], set_uid='parent')
+            uids = ['child-a', 'child-b', 'child-c']
+            for uid in uids:
+                _add_todo(ctx, summary=[uid], set_uid=uid, set_parent=['parent'])
+            parent = ctx.obj['calendars'][0].get_object_by_uid('parent')
+            assert set(parent.get_relatives(fetch_objects=False)['CHILD']) == set(uids)
+            _select(ctx, todo=True, uid=uids)
+            assert len(ctx.obj['objs']) == 3
+            _edit(ctx, complete=True)
+            for uid in uids:
+                todo = ctx.obj['calendars'][0].get_object_by_uid(uid)
+                assert todo.icalendar_component['STATUS'] == 'COMPLETED'
+            parent = ctx.obj['calendars'][0].get_object_by_uid('parent')
+            assert parent.icalendar_component.get('STATUS', 'NEEDS-ACTION') == 'NEEDS-ACTION'
+    finally:
+        stop_xandikos_server(conn_details)
 
 ## TODO:
 ## Things to be tested: lib._procrastinate, cli._select, cli._cats, cli._list, cli._interactive_edit, cli._set_something, cli._interactive_ical_edit, cli._edit, cli._check_for_panic, _add_todo, _agenda, _check_due,
