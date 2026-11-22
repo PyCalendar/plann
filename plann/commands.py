@@ -7,6 +7,7 @@ import caldav
 
 ## TODO: can we remove the click-dependency?
 import click
+import icalendar
 from caldav.lib.error import ETagMismatchError, NotFoundError, PutError, ScheduleTagMismatchError
 from icalendar_searcher import Searcher
 
@@ -430,6 +431,38 @@ def _process_set_args(ctx, kwargs, keep_category=False):
     if 'ical_fragment' in kwargs:
         ctx.obj['set_args']['ics'] = kwargs['ical_fragment']
 
+def _alarm_args(set_args, summary, related_end=False, anchored=False):
+    """
+    Turns the value of --set-alarm into the alarm_* arguments of caldav's
+    save_todo/save_event.  A duration means that long before DTSTART -
+    or before DUE when related_end is set - and with a "+" that long
+    after, as in an iCalendar TRIGGER.  Anything else is a timestamp.
+    """
+    alarm = set_args.pop('alarm', None)
+    if not alarm:
+        return {}
+    alarm = alarm.strip()
+    if re.fullmatch(r'[+-]?[\d.]+[a-z]*', alarm):
+        try:
+            delta = parse_add_dur(None, alarm.lstrip('+-'))
+        except ValueError as e:
+            _abort(f"--set-alarm={alarm}: {e}")
+        if not alarm.startswith('+'):
+            delta = -delta
+        if not ({'due', 'dtstart'} & set(set_args)) and not anchored:
+            _abort(f"--set-alarm={alarm} is relative to DTSTART or DUE, but neither is given")
+        trigger = icalendar.vDDDTypes(delta)
+        if related_end:
+            trigger.params['RELATED'] = 'END'
+    else:
+        try:
+            when = parse_dt(alarm, return_type=datetime.datetime)
+        except ValueError:
+            _abort(f"--set-alarm={alarm}: neither a duration (like 10m) nor a timestamp")
+        trigger = icalendar.vDDDTypes(when.astimezone(datetime.timezone.utc))
+        trigger.params['VALUE'] = 'DATE-TIME'
+    return {'alarm_trigger': trigger, 'alarm_action': 'DISPLAY', 'alarm_description': summary}
+
 def _add_todo(ctx, **kwargs):
     """
     Creates a new task with given SUMMARY
@@ -452,9 +485,11 @@ def _add_todo(ctx, **kwargs):
     duration = None
     if ctx.obj['set_args'].get('duration'):
         duration = ctx.obj['set_args'].pop('duration')
+    alarm = _alarm_args(ctx.obj['set_args'], ctx.obj['set_args']['summary'],
+                        related_end='due' in ctx.obj['set_args'] or duration is not None)
 
     for cal in ctx.obj['calendars']:
-        todo = cal.save_todo(ical=ctx.obj.get('ical_fragment', ""), **ctx.obj['set_args'], no_overwrite=True)
+        todo = cal.save_todo(ical=ctx.obj.get('ical_fragment', ""), **ctx.obj['set_args'], **alarm, no_overwrite=True)
         if duration:
             todo.set_duration(duration)
             todo.save()
@@ -474,9 +509,10 @@ def _add_journal(ctx, **kwargs):
 
 def _add_event(ctx, timespec, **kwargs):
     _process_set_args(ctx, kwargs)
+    alarm = _alarm_args(ctx.obj['set_args'], ctx.obj['set_args'].get('summary', kwargs.get('summary')), anchored=True)
     for cal in ctx.obj['calendars']:
         (dtstart, dtend) = parse_timespec(timespec, for_storage=True)
-        event = cal.save_event(dtstart=dtstart, dtend=dtend, **ctx.obj['set_args'], no_overwrite=True)
+        event = cal.save_event(dtstart=dtstart, dtend=dtend, **ctx.obj['set_args'], **alarm, no_overwrite=True)
         click.echo(f"uid={event.id}")
     return event
 
