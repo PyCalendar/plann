@@ -93,6 +93,15 @@ Most often, no options should be given to the command `add` - with the exception
 
 Most of the options given after the subcommand are for populating object properties like location, categories, geo, class, etc.
 
+`--set-alarm` adds a reminder to a task or an event: a duration like `10m` or `1h` puts it that long before the DUE of a task (or its DTSTART, if it has no DUE) or before the start of an event (`+10m` is that long after, as in iCalendar), a timestamp puts it at that time:
+
+```
+plann add todo --set-due='2022-12-31 17:00' --set-alarm=2h 'Buy fireworks'
+plann add event --set-alarm=30m 'New years party' '2022-12-31T17:00+8h'
+```
+
+Other alarms (several of them, other actions) can be given as raw iCalendar lines with `plann add -l BEGIN:VALARM -l ACTION:DISPLAY -l DESCRIPTION:fireworks -l TRIGGER:-PT2H -l END:VALARM todo ...` (this needs a caldav release after 3.7.0).
+
 ## Selecting things from the calendar
 
 ```
