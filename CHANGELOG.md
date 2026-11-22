@@ -18,7 +18,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 ### Fixed
 
 * `plann add -l LINE event` dropped the extra iCalendar lines; they are now added to the event, as they were to tasks and journals.
-* A task with DTSTART as a date and DUE as a timestamp (or the other way around) made `interactive manage-tasks` and other selections crash with `KeyError: 'DTEND'`.  The date is now made a timestamp at local midnight; the time of day on the other one is kept (it used to be dropped), and the result is valid iCalendar.
+* A task with DTSTART as a date and DUE as a timestamp (or the other way around) made `interactive manage-tasks` and other selections crash with `KeyError: 'DTEND'`.  The date is now made a timestamp at midnight, in the timezone of the other one if it has a named one, else in the local timezone; the time of day on the other one is kept (it used to be dropped), and the result is valid iCalendar.
 * `interactive check-due` (also run by `interactive manage-tasks`) silently left out the due tasks beyond the first 16, usually the low-priority ones.  It now says how many tasks are due when it cannot show them all.
 * A bare hour (one or two digits, 0-23) in a date or time argument, like `--set-dtstart=14`, means 14:00 today in the implicit timezone.  It was taken as the 14th of the month, giving an all-day task.
 * `interactive manage-tasks`: a parent task postponed together with its child could be postponed once more in its own turn, and with caldav 3.6 this crashed with a "412 Precondition Failed" error.  It is now skipped, with a note.  A task changed on the server in the meantime is reloaded before it is postponed.

@@ -199,9 +199,63 @@ def test_mismatched_date_types_floating_stays_floating():
     assert comp['DUE'].dt == datetime.datetime(2026, 11, 18)
 
 
-def test_aware_vs_floating_does_not_crash():
-    """A floating DTSTART and a UTC DUE cannot be compared directly"""
+def test_aware_vs_floating_does_not_crash(caplog):
+    """A floating DTSTART and a UTC DUE cannot be compared directly - but
+    the check still works, and reports a DTSTART after the DUE"""
     from plann.commands import _fix_mismatched_date_types
 
     comp = _vtodo('aware-floating', "DTSTART:20261119T100000\nDUE:20261118T140000Z\n").icalendar_component
     _fix_mismatched_date_types(comp)
+    assert any('has dtstart after dtend/due' in r.getMessage() for r in caplog.records)
+
+
+def test_mismatched_date_types_keeps_the_tzid():
+    """With a named timezone on the other side, the date becomes midnight in
+    that timezone, not in the implicit one, so the task keeps one timezone"""
+    from plann.commands import _fix_mismatched_date_types
+
+    comp = _vtodo('tzid', "DTSTART;VALUE=DATE:20261101\nDUE;TZID=America/New_York:20261110T120000\n").icalendar_component
+    _fix_mismatched_date_types(comp)
+    assert b'DTSTART;TZID=America/New_York:20261101T000000' in comp.to_ical()
+
+    comp = _vtodo('tzid-end', "DTSTART;TZID=America/New_York:20261101T120000\nDUE;VALUE=DATE:20261110\n").icalendar_component
+    _fix_mismatched_date_types(comp)
+    assert b'DUE;TZID=America/New_York:20261110T000000' in comp.to_ical()
+
+
+def test_mismatched_date_types_utc_tzid_is_utc(monkeypatch):
+    """A TZID naming UTC is UTC: the date becomes midnight in the implicit
+    timezone, as with a timestamp ending in Z"""
+    import datetime
+    from zoneinfo import ZoneInfo
+
+    from plann import timespec
+    from plann.commands import _fix_mismatched_date_types
+
+    monkeypatch.setitem(vars(timespec.tz), "_implicit_timezone", ZoneInfo("America/New_York"))
+    for tzid in ('UTC', 'Etc/UTC'):
+        comp = _vtodo('utc', f"DTSTART;VALUE=DATE:20261101\nDUE;TZID={tzid}:20261110T120000\n").icalendar_component
+        _fix_mismatched_date_types(comp)
+        assert comp['DTSTART'].dt == datetime.datetime(2026, 11, 1, tzinfo=ZoneInfo("America/New_York")), tzid
+
+
+def test_mismatched_date_types_one_tzid_name():
+    """A TZID that icalendar knows under another name (a Windows name) is
+    written under that name in both properties, not in one of them only"""
+    from plann.commands import _fix_mismatched_date_types
+
+    comp = _vtodo('windows', "DTSTART;VALUE=DATE:20261101\nDUE;TZID=W. Europe Standard Time:20261110T120000\n").icalendar_component
+    _fix_mismatched_date_types(comp)
+    ical = comp.to_ical()
+    assert comp['DTSTART'].params['TZID'] == comp['DUE'].params['TZID'], ical
+    assert b'20261101T000000' in ical and b'20261110T120000' in ical
+
+
+def test_mismatched_date_types_still_checks_the_order(caplog):
+    """After the date is made a timestamp, a DTSTART after the DUE is still
+    reported"""
+    from plann.commands import _fix_mismatched_date_types
+
+    comp = _vtodo('late', "DTSTART;VALUE=DATE:20261201\nDUE;TZID=Europe/Oslo:20261110T120000\n").icalendar_component
+    _fix_mismatched_date_types(comp)
+    assert any('has dtstart after dtend/due' in r.getMessage() for r in caplog.records)
