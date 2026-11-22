@@ -491,19 +491,27 @@ def _process_set_args(ctx, kwargs, keep_category=False):
 def _alarm_args(set_args, summary, related_end=False, anchored=False):
     """
     Turns the value of --set-alarm into the alarm_* arguments of caldav's
-    save_todo/save_event.  A duration means that long before DTSTART -
-    or before DUE when related_end is set - and with a "+" that long
-    after, as in an iCalendar TRIGGER.  Anything else is a timestamp.
+    save_todo/save_event.  A duration (a number without a unit is minutes)
+    means that long before DTSTART - or before DUE when related_end is
+    set - and with a "+" that long after, as in an iCalendar TRIGGER.
+    Anything else is a timestamp.
     """
     alarm = set_args.pop('alarm', None)
     if not alarm:
         return {}
     alarm = alarm.strip()
-    if re.fullmatch(r'[+-]?[\d.]+[a-z]*', alarm):
+    ## a number without a unit is minutes, as in most calendar software
+    unitless = re.fullmatch(r'[+-]?\d+(\.\d+)?', alarm)
+    duration = alarm + 'm' if unitless else alarm
+    if re.fullmatch(r'[+-]?[\d.]+[a-z]*', duration):
         try:
-            delta = parse_add_dur(None, alarm.lstrip('+-'))
+            delta = parse_add_dur(None, duration.lstrip('+-'))
         except ValueError as e:
             _abort(f"--set-alarm={alarm}: {e}")
+        if unitless and datetime.timedelta(0) < delta < datetime.timedelta(minutes=1):
+            logging.warning(
+                f"--set-alarm={alarm} is {delta.total_seconds():g} seconds: a number "
+                f"without a unit is minutes (for a fraction of an hour, use e.g. 0.25h)")
         if not alarm.startswith('+'):
             delta = -delta
         if not ({'due', 'dtstart'} & set(set_args)) and not anchored:

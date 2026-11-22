@@ -606,7 +606,7 @@ def ical(ctx, ical_data, ical_file):
 @add.command()
 @click.argument('summary', nargs=-1)
 @_set_attr_options(verb='set')
-@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after) before the start of an event, or the DUE (else DTSTART) of a task")
+@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after; a number without a unit is minutes) before the start of an event, or the DUE (else DTSTART) of a task")
 @click.pass_context
 def todo(ctx, **kwargs):
     return _add_todo(ctx, **kwargs)
@@ -616,7 +616,7 @@ def todo(ctx, **kwargs):
 @click.argument('summary')
 @click.argument('timespec')
 @_set_attr_options(verb='set')
-@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after) before the start of an event, or the DUE (else DTSTART) of a task")
+@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after; a number without a unit is minutes) before the start of an event, or the DUE (else DTSTART) of a task")
 @click.pass_context
 def event(ctx, timespec, **kwargs):
     """

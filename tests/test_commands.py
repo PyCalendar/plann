@@ -129,12 +129,49 @@ def test_set_alarm_absolute_time_is_tagged_date_time():
     assert alarm['TRIGGER'].params['VALUE'] == 'DATE-TIME'
 
 
-def test_set_alarm_bad_values_are_refused():
-    """A duration without a unit, a fractional year or garbage is refused,
-    not read as some timestamp"""
+def test_set_alarm_number_without_unit_is_minutes():
+    """A number without a unit is minutes, as in most calendar software -
+    not an hour of the day, as a bare number is in a date or time argument.
+    The same for every number, so 58 and 61 work alike."""
+    import datetime
+    for value, minutes in (('15', -15), ('61', -61), ('+5', 5), ('0.25h', -15)):
+        cal = _saved_ical('save_todo', 'VTODO', summary=['x'],
+                          set_due='2032-12-01 10:00', set_alarm=value)
+        todo, alarm = _alarm(cal)
+        assert alarm['TRIGGER'].dt == datetime.timedelta(minutes=minutes), value
+
+
+def test_set_alarm_under_a_minute_without_unit_warns(caplog):
+    """0.25 is 15 seconds, which is hardly meant - warn, pointing to 0.25h"""
+    import datetime
+    cal = _saved_ical('save_todo', 'VTODO', summary=['x'],
+                      set_due='2032-12-01 10:00', set_alarm='0.25')
+    todo, alarm = _alarm(cal)
+    assert alarm['TRIGGER'].dt == -datetime.timedelta(seconds=15)
+    assert any('0.25h' in r.getMessage() for r in caplog.records if r.levelname == 'WARNING')
+    caplog.clear()
+    _saved_ical('save_todo', 'VTODO', summary=['x'],
+                set_due='2032-12-01 10:00', set_alarm='30s')
+    assert not [r for r in caplog.records if r.levelname == 'WARNING']
+
+
+def test_set_alarm_bad_number_error_shows_the_value_given(capsys):
+    """The minutes unit added to a bare number does not show up in errors"""
     import click
     import pytest
-    for value in ('10', '1.5y', 'garbage xyz'):
+    for value in ('1.2.3', '.', '1.'):
+        with pytest.raises(click.Abort):
+            _saved_ical('save_todo', 'VTODO', summary=['x'],
+                        set_due='2032-12-01 10:00', set_alarm=value)
+        out = capsys.readouterr().out
+        assert f'{value}m' not in out, out
+
+
+def test_set_alarm_bad_values_are_refused():
+    """A fractional year or garbage is refused, not read as some timestamp"""
+    import click
+    import pytest
+    for value in ('1.5y', 'garbage xyz'):
         with pytest.raises(click.Abort):
             _saved_ical('save_todo', 'VTODO', summary=['x'],
                         set_due='2032-12-01 10:00', set_alarm=value)
