@@ -18,6 +18,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 
 ### Fixed
 
+* The `plann agenda --help` text now lists two runnable `plann select` commands giving the same events and tasks as `agenda`.  In the task one, the `--sort-key '{PRIORITY:?0}'` template had no effect and `list --bottom-up` stood where `select --skip-parents` belongs, and the event one lacked the sort keys.  It also pointed to a nonexistent USAGE.md instead of USER_GUIDE.md.
 * `plann add -l LINE event` dropped the extra iCalendar lines; they are now added to the event, as they were to tasks and journals.
 * A task with DTSTART as a date and DUE as a timestamp (or the other way around) made `interactive manage-tasks` and other selections crash with `KeyError: 'DTEND'`.  The date is now made a timestamp at midnight, in the timezone of the other one if it has a named one, else in the local timezone; the time of day on the other one is kept (it used to be dropped), and the result is valid iCalendar.
 * `interactive check-due` (also run by `interactive manage-tasks`) silently left out the due tasks beyond the first 16, usually the low-priority ones.  It now says how many tasks are due when it cannot show them all.

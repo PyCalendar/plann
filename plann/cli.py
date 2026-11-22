@@ -656,12 +656,12 @@ def agenda(ctx):
 
     This command is slightly redundant, same results may be obtained by running those two commands in series:
 
-      `select --event --start=now --end=+7d --limit=16 list`
-
-      `select --todo --sort-key '{DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}' --sort-key '{PRIORITY:?0}' --end=+7d --limit=16 list --bottom-up`
+    \b
+      plann select --event --start=now --end=+7d --limit=16 --sort-key '{DTSTART:%F %H:%M:%S}' --sort-key 'get_duration()' list
+      plann select --todo --end=+7d --limit=16 --skip-parents --sort-key '{DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}' --sort-key '{PRIORITY:?0?}' list
 
     agenda is for convenience only and takes no options or parameters.
-    Use the select command for advanced usage.  See also USAGE.md.
+    Use the select command for advanced usage.  See also USER_GUIDE.md.
     """
     return _agenda(ctx)
 

@@ -6,8 +6,10 @@
 
 import asyncio
 import datetime
+import gc
 import os
 import re
+import shlex
 import tempfile
 import threading
 import time
@@ -18,6 +20,7 @@ import aiohttp
 import aiohttp.web
 import caldav
 import niquests as requests
+import pytest
 from caldav.lib.error import PutError
 from xandikos.web import SingleUserFilesystemBackend, XandikosApp
 
@@ -691,3 +694,54 @@ def test_complete_several_sibling_tasks_by_uid():
 
 ## TODO:
 ## Things to be tested: lib._procrastinate, cli._select, cli._cats, cli._list, cli._interactive_edit, cli._set_something, cli._interactive_ical_edit, cli._edit, cli._check_for_panic, _add_todo, _agenda, _check_due,
+
+## The CLI does not close the connections it opens (fine for a one-shot process)
+@pytest.mark.filterwarnings("ignore::ResourceWarning", "ignore::pytest.PytestUnraisableExceptionWarning")
+def test_agenda_help_commands_reproduce_agenda():
+    """`plann agenda --help` lists two `plann select` commands that are
+    supposed to give the same output as `plann agenda`.  They once lacked
+    the `plann` prefix, sorted tasks on a template that had no effect
+    and used `list --bottom-up` instead of `--skip-parents`."""
+    from click.testing import CliRunner
+
+    from plann.cli import cli
+    conn_details = start_xandikos_server()
+    try:
+        with caldav.get_calendars(
+            url=conn_details['caldav_url'],
+            username=conn_details['caldav_user'],
+            password=conn_details['caldav_password'],
+            raise_errors=True,
+        ) as calendars:
+            ctx = MagicMock()
+            ctx.obj = dict()
+            ctx.obj['calendars'] = list(calendars)
+            base = datetime.datetime.now().replace(microsecond=0) + datetime.timedelta(days=1)
+            hour = datetime.timedelta(hours=1)
+            ## created out of order, and two with the same start but different durations
+            _add_event(ctx, summary='late', timespec=(base+5*hour, base+6*hour))
+            _add_event(ctx, summary='long', timespec=(base, base+3*hour))
+            _add_event(ctx, summary='short', timespec=(base, base+hour))
+            _add_todo(ctx, summary=['parent'], set_uid='parent', set_due=str(base+2*hour))
+            _add_todo(ctx, summary=['child'], set_uid='child', set_parent=['parent'], set_due=str(base+2*hour))
+            _add_todo(ctx, summary=['low prio'], set_due=str(base+hour), set_priority=9)
+            _add_todo(ctx, summary=['high prio'], set_due=str(base+hour), set_priority=1)
+        conn = ['--skip-config', '--caldav-url', conn_details['caldav_url'],
+                '--caldav-user', conn_details['caldav_user'],
+                '--caldav-pass', conn_details['caldav_password']]
+        def run(args):
+            res = CliRunner().invoke(cli, conn + args)
+            assert res.exit_code == 0, res.output
+            return res.output
+        help_cmds = [shlex.split(line.strip()) for line in run(['agenda', '--help']).splitlines()
+                     if line.strip().startswith('plann select ')]
+        assert len(help_cmds) == 2
+        agenda = run(['agenda'])
+        assert 'parent' not in agenda
+        assert agenda.index('high prio') < agenda.index('low prio')
+        assert agenda.index('short') < agenda.index('long') < agenda.index('late')
+        assert agenda == run(help_cmds[0][1:]) + '======\n' + run(help_cmds[1][1:])
+    finally:
+        stop_xandikos_server(conn_details)
+        ## finalize the leaked sockets here, under this test's filter
+        gc.collect()
