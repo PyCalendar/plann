@@ -8,6 +8,7 @@ and I do try to adhere to [Semantic Versioning](https://semver.org/spec/v2.0.0.h
 ### Added
 
 * `add todo` and `add event` take `--set-alarm`, either a duration like `10m` (that long before the DUE of a task, or before its DTSTART if it has none, or before the start of an event; `+10m` is after, as in iCalendar) or a timestamp.  The alarm displays the summary.
+* A warning when the singular `--set-category`, `--add-category` or `--add-resource` is given a value with a comma in it, like `--set-category=boat,keyboard`, and when a plural option like `--set-categories` is given more than once with a comma in a value.  Both give one category named `boat,keyboard`, while a single `--set-categories=boat,keyboard` gives two.  The behaviour itself is unchanged (it is intended), but is now documented in the user guide.
 * `plann interactive check-pinned` goes through the past week's events pinning tasks to the calendar (as made by the panic planning in `interactive manage-tasks`) and asks if each task was done.  A done task is completed (with its subtasks), and its event is marked as confirmed; its other pins may be cancelled.  If not done, the event is cancelled.  It is also run first in `interactive manage-tasks`.  https://github.com/pycalendar/plann/pull/89
 
 ### Fixed

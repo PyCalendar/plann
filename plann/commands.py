@@ -2,6 +2,7 @@
 import datetime
 import logging
 import re
+import shlex
 
 import caldav
 
@@ -25,8 +26,10 @@ from plann.interactive import (
     interactive_split_task,
 )
 from plann.lib import (
+    COMMA_LIST_ATTRS,
     _add_comma_list,
     _comma_list_canonical,
+    _comma_list_is_plural,
     _comma_list_tokens,
     _complete,
     _component_type,
@@ -404,6 +407,30 @@ def _check_for_panic(ctx, hours_per_day, output=True, print_timeline=True, fix_t
 
     return possible_timeline
 
+def _warn_comma_literal(verb, attr, value):
+    """The singular --add-category/--add-resource/--set-category keep a comma
+    literally, giving one category (or resource) containing a comma, and so
+    does a plural option given more than once.  That is intended, but nearly
+    always a mistake - warn.  (A bare string, as from the interactive editor,
+    is always split on comma: nothing to warn about.)"""
+    if not _is_comma_list_attr(attr) or hasattr(value, 'split'):
+        return
+    if _comma_list_is_plural(attr):
+        if len(value) > 1:
+            for v in value:
+                if ',' in v:
+                    logging.warning(
+                        f"--{verb}-{attr} given more than once keeps the comma in "
+                        f"{shlex.quote(v)}, giving one {COMMA_LIST_ATTRS[attr]} "
+                        f"containing a comma; give all of them in one --{verb}-{attr}")
+        return
+    plural = _comma_list_canonical(attr)
+    for v in value:
+        if ',' in v:
+            logging.warning(
+                f"--{verb}-{attr}={shlex.quote(v)} gives one {attr} containing a comma; "
+                f"use --{verb}-{plural}={shlex.quote(v)} for several")
+
 def _process_add_args(kwargs):
     """Pop the --add-<attr> options out of kwargs and return a list of
     ``(canonical_property, tokens)`` pairs to append.  Only comma-list
@@ -415,6 +442,7 @@ def _process_add_args(kwargs):
         attr = key[4:]
         if not value or not _is_comma_list_attr(attr):
             continue
+        _warn_comma_literal('add', attr, value)
         ret.append((_comma_list_canonical(attr), _comma_list_tokens(attr, value)))
     return ret
 
@@ -425,6 +453,7 @@ def _process_set_args(ctx, kwargs, keep_category=False):
             continue
         if not x.startswith('set_'):
             continue
+        _warn_comma_literal('set', x[4:], kwargs[x])
         ctx.obj['set_args'].update(_process_set_arg(x[4:], kwargs[x], keep_category=keep_category))
     if 'summary' in kwargs:
         ctx.obj['set_args']['summary'] = ctx.obj['set_args'].get('summary', '') + kwargs['summary']

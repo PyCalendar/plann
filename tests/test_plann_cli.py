@@ -10,7 +10,7 @@ from click.testing import CliRunner
 import plann.cli as cli_mod
 import plann.commands as commands_mod
 from plann.cli import _LazyCalendars, cli, delete, edit
-from plann.commands import _process_add_args, _set_task_attribs, _sort_key_function, _todos_missing
+from plann.commands import _process_add_args, _process_set_args, _set_task_attribs, _sort_key_function, _todos_missing
 from tests.test_freebusy import FakeCalendar, _event, oslo
 
 
@@ -287,6 +287,41 @@ def test_process_add_args():
     ## add_* keys are consumed; unrelated keys are left untouched
     assert not any(k.startswith('add_') for k in kwargs)
     assert 'set_summary' in kwargs
+
+
+def test_singular_comma_warns(caplog):
+    """A comma in a singular --add-category/--add-resource/--set-category value
+    is kept literally (one category containing a comma) - that is intended,
+    but almost always a typo for the plural form, so it is warned about."""
+    _process_add_args({'add_category': ('a,b',), 'add_resource': ('R1,R2',)})
+    ctx = type('Ctx', (), {'obj': {}})()
+    _process_set_args(ctx, {'set_category': ('c,d',)})
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == 'WARNING']
+    for opt, value, plural in (('--add-category', 'a,b', '--add-categories'),
+                               ('--add-resource', 'R1,R2', '--add-resources'),
+                               ('--set-category', 'c,d', '--set-categories')):
+        assert any(f"{opt}={value} " in w and f"{plural}={value} " in w for w in warnings), opt
+
+
+def test_repeated_plural_comma_warns(caplog):
+    """The plural form splits on comma only when given once: repeated, a comma
+    is kept literally, like in the singular form - warn about that too."""
+    _process_add_args({'add_categories': ('a,b', 'c')})
+    ctx = type('Ctx', (), {'obj': {}})()
+    _process_set_args(ctx, {'set_categories': ('d', 'e,f')})
+    warnings = [r.getMessage() for r in caplog.records if r.levelname == 'WARNING']
+    assert any('--add-categories' in w and 'a,b' in w and 'one category ' in w for w in warnings)
+    assert any('--set-categories' in w and 'e,f' in w for w in warnings)
+
+
+def test_no_comma_warning_for_plural_or_plain_values(caplog):
+    _process_add_args({'add_categories': ('a,b',), 'add_category': ('a',)})
+    ctx = type('Ctx', (), {'obj': {}})()
+    _process_set_args(ctx, {'set_categories': ('c,d',), 'set_category': ('e',),
+                            'set_comment': ('f,g',)})
+    ## a bare string is always split on comma, so nothing to warn about
+    _process_set_args(ctx, {'set_category': 'g,h'})
+    assert not [r for r in caplog.records if r.levelname == 'WARNING']
 
 
 class _FakeCalNotFound:
