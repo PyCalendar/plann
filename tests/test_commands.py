@@ -147,3 +147,14 @@ def test_set_alarm_with_duration_only_is_refused():
     with pytest.raises(click.Abort):
         _saved_ical('save_todo', 'VTODO', summary=['x'], set_duration='1h', set_alarm='10m')
 
+
+
+def test_add_event_passes_ical_lines():
+    """`add -l ... event` used to drop the lines"""
+    from plann.commands import _add_event
+
+    cal = MagicMock()
+    ctx = MagicMock()
+    ctx.obj = {'calendars': [cal], 'ical_fragment': 'LOCATION:here'}
+    _add_event(ctx, summary='x', timespec='2032-12-01T10:00+1h')
+    assert cal.save_event.call_args.kwargs['ical'] == 'LOCATION:here'

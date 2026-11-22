@@ -512,7 +512,7 @@ def _add_event(ctx, timespec, **kwargs):
     alarm = _alarm_args(ctx.obj['set_args'], ctx.obj['set_args'].get('summary', kwargs.get('summary')), anchored=True)
     for cal in ctx.obj['calendars']:
         (dtstart, dtend) = parse_timespec(timespec, for_storage=True)
-        event = cal.save_event(dtstart=dtstart, dtend=dtend, **ctx.obj['set_args'], **alarm, no_overwrite=True)
+        event = cal.save_event(ical=ctx.obj.get('ical_fragment', ""), dtstart=dtstart, dtend=dtend, **ctx.obj['set_args'], **alarm, no_overwrite=True)
         click.echo(f"uid={event.id}")
     return event
 
