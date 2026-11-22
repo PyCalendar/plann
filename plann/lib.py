@@ -666,8 +666,16 @@ def _set_something(obj, arg, value):
             obj.set_relation(reltype=arg, other=val)
     elif arg == 'duration':
         obj.set_duration(value)
-    elif arg in ('due', 'dtend'): ## moves DTSTART too - _edit sets DTSTART after this
-        getattr(obj, f"set_{arg}")(value, move_dtstart=True, check_dependent=True)
+    elif arg in ('due', 'dtend'):
+        ## moves DTSTART too - _edit sets DTSTART after this
+        right = {'VTODO': 'due', 'VEVENT': 'dtend'}.get(comp.name)
+        if arg != right:
+            hint = f", it ends with {right.upper()}" if right else ""
+            raise click.UsageError(f"a {comp.name} has no {arg.upper()}{hint}")
+        if arg == 'due':
+            obj.set_due(value, move_dtstart=True, check_dependent=True)
+        else: ## parent/child due checks are VTODO-only
+            obj.set_dtend(value, move_dtstart=True)
     elif _is_comma_list_attr(arg):
         ## a list (already processed by _process_set_arg) or a raw comma string
         tokens = _comma_list_tokens(arg, value)

@@ -1,8 +1,9 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import click
 import pytest
-from caldav import Calendar, Todo
+from caldav import Calendar, Event, Journal, Todo
 
 from plann.lib import (
     _add_category,
@@ -238,6 +239,34 @@ def test_add_set_category():
     ## ... while plural "categories" replaces (and splits on comma)
     _set_something(t, 'categories', 'zoo,bar')
     assert _comma_list_set(t, 'CATEGORIES') == {'zoo', 'bar'}
+
+
+def test_set_dtend_on_event():
+    """edit --set-dtend on an event moves it, keeping its duration.
+    Event.set_dtend takes no check_dependent argument (that is a
+    VTODO-only concept), so passing one crashed with a TypeError."""
+    e = Event()
+    e.data = todo.replace('VTODO', 'VEVENT').replace('DUE:', 'DTEND:')
+    _set_something(e, 'dtend', datetime(1997, 4, 20, 4, 59, 59, tzinfo=utc))
+    comp = e.icalendar_component
+    assert comp['DTEND'].dt == datetime(1997, 4, 20, 4, 59, 59, tzinfo=utc)
+    assert comp['DTSTART'].dt == datetime(1997, 4, 19, 13, 30, tzinfo=utc)
+
+
+@pytest.mark.parametrize("objclass, comp_name, arg", [
+    (Todo, 'VTODO', 'dtend'),
+    (Event, 'VEVENT', 'due'),
+    (Journal, 'VJOURNAL', 'due'),
+    (Journal, 'VJOURNAL', 'dtend'),
+])
+def test_set_end_on_wrong_component(objclass, comp_name, arg):
+    """A task ends with DUE, an event with DTEND, and a journal has
+    neither: the wrong one is a usage error naming the right one,
+    not an AttributeError."""
+    obj = objclass()
+    obj.data = todo.replace('VTODO', comp_name).replace('DUE:19970416T045959Z\n', '')
+    with pytest.raises(click.UsageError, match=comp_name):
+        _set_something(obj, arg, datetime(1997, 4, 20, tzinfo=utc))
 
 
 def test_add_set_resources():
