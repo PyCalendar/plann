@@ -224,15 +224,7 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
 
     ## some sanity checks
     for obj in ctx.obj['objs']:
-        comp = obj.icalendar_component
-        dtstart = comp.get('dtstart')
-        dtend = comp.get('dtend') or comp.get('due')
-        if dtstart and dtend and isinstance(dtstart.dt, datetime.datetime) != isinstance(dtend.dt, datetime.datetime):
-            logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
-            comp['dtstart'].dt = datetime.datetime(dtstart.dt.year, dtstart.dt.month, dtstart.dt.day)
-            comp['dtend'].dt = datetime.datetime(dtend.dt.year, dtend.dt.month, dtend.dt.day)
-        elif dtstart and dtend and dtstart.dt > dtend.dt:
-            logging.error(f"task with uuid {comp['uid']} as dtstart after dtend/due")
+        _fix_mismatched_date_types(obj.icalendar_component)
 
     ## I need a way to copy time information from one calendar to another
     ## (typically between private and work calendars) without carrying over
@@ -247,6 +239,42 @@ def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=N
                     del comp[attr]
                 if attr == 'SUMMARY':
                     comp[attr] = freebusyhack
+
+def _fix_mismatched_date_types(comp):
+    """If one of DTSTART and DTEND/DUE is a date and the other a timestamp,
+    turn the date into a timestamp at midnight, so they can be compared: in
+    the timezone of the timestamp if it has a named one (TZID), floating if
+    it is floating, and in the implicit timezone if it is in UTC (also a
+    TZID naming UTC).  The time
+    of day on the timestamp is kept.  Logs an error if DTSTART comes after
+    DTEND/DUE."""
+    endkey = 'DTEND' if 'DTEND' in comp else 'DUE'
+    dtstart = comp.get('DTSTART')
+    dtend = comp.get(endkey)
+    if not (dtstart and dtend):
+        return
+    start_is_ts = isinstance(dtstart.dt, datetime.datetime)
+    if start_is_ts != isinstance(dtend.dt, datetime.datetime):
+        logging.error(f"task with uuid {comp['uid']} has non-matching types on dtstart and dtend/due, setting both to timestamps")
+        date_key, d, other_key, other = (endkey, dtend, 'DTSTART', dtstart) if start_is_ts else ('DTSTART', dtstart, endkey, dtend)
+        d = d.dt
+        tz = other.dt.tzinfo
+        is_utc = tz is datetime.timezone.utc or str(tz) in ('UTC', 'Etc/UTC', 'Etc/Zulu', 'Zulu', 'Etc/UCT', 'UCT')
+        new_ts = datetime.datetime(d.year, d.month, d.day)
+        if tz and 'TZID' in other.params and not is_utc:
+            new_ts = new_ts.replace(tzinfo=tz)
+            ## re-add the other one too, so icalendar writes its own name for
+            ## the timezone (e.g. Europe/Berlin for "W. Europe Standard Time")
+            ## in both properties
+            comp.pop(other_key)
+            comp.add(other_key, other.dt)
+        elif tz:
+            new_ts = _ensure_ts(d)
+        ## replace the property rather than setting .dt, so VALUE=DATE goes away
+        comp.pop(date_key)
+        comp.add(date_key, new_ts)
+    if _ensure_ts(comp['DTSTART'].dt) > _ensure_ts(comp[endkey].dt):
+        logging.error(f"task with uuid {comp['uid']} has dtstart after dtend/due")
 
 def _categories_in_use(objs):
     categories = set()
@@ -463,19 +491,27 @@ def _process_set_args(ctx, kwargs, keep_category=False):
 def _alarm_args(set_args, summary, related_end=False, anchored=False):
     """
     Turns the value of --set-alarm into the alarm_* arguments of caldav's
-    save_todo/save_event.  A duration means that long before DTSTART -
-    or before DUE when related_end is set - and with a "+" that long
-    after, as in an iCalendar TRIGGER.  Anything else is a timestamp.
+    save_todo/save_event.  A duration (a number without a unit is minutes)
+    means that long before DTSTART - or before DUE when related_end is
+    set - and with a "+" that long after, as in an iCalendar TRIGGER.
+    Anything else is a timestamp.
     """
     alarm = set_args.pop('alarm', None)
     if not alarm:
         return {}
     alarm = alarm.strip()
-    if re.fullmatch(r'[+-]?[\d.]+[a-z]*', alarm):
+    ## a number without a unit is minutes, as in most calendar software
+    unitless = re.fullmatch(r'[+-]?\d+(\.\d+)?', alarm)
+    duration = alarm + 'm' if unitless else alarm
+    if re.fullmatch(r'[+-]?[\d.]+[a-z]*', duration):
         try:
-            delta = parse_add_dur(None, alarm.lstrip('+-'))
+            delta = parse_add_dur(None, duration.lstrip('+-'))
         except ValueError as e:
             _abort(f"--set-alarm={alarm}: {e}")
+        if unitless and datetime.timedelta(0) < delta < datetime.timedelta(minutes=1):
+            logging.warning(
+                f"--set-alarm={alarm} is {delta.total_seconds():g} seconds: a number "
+                f"without a unit is minutes (for a fraction of an hour, use e.g. 0.25h)")
         if not alarm.startswith('+'):
             delta = -delta
         if not ({'due', 'dtstart'} & set(set_args)) and not anchored:
@@ -555,17 +591,19 @@ def _agenda(ctx):
 
 def _check_due(ctx, limit=16, lookahead='24h'):
     end_ = parse_add_dur(datetime.datetime.now(), lookahead)
-    _select(ctx=ctx, todo=True, end=end_, limit=limit, sort_key=['{PRIORITY:?0?} {DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}'])
-    objs = ctx.obj['objs']
-    for obj in objs:
+    _select(ctx=ctx, todo=True, end=end_, sort_key=['{PRIORITY:?0?} {DTSTART:?{DUE:?(0000)?}?%F %H:%M:%S}'])
+    def is_due(obj):
         ## client side filtering in case the server returns too much
         ## TODO: should be moved to the caldav library
-        ## TODO: consider the limit ... we may risk that nothing comes up due to the limit above
         comp = obj.icalendar_component
-        dtstart = comp.get('dtstart') or comp.get('due')
-        dtstart = _ensure_ts(dtstart)
-        if dtstart.strftime("%F%H%M") > end_.strftime("%F%H%M"):
-            continue
+        dtstart = _ensure_ts(comp.get('dtstart') or comp.get('due'))
+        return dtstart.strftime("%F%H%M") <= end_.strftime("%F%H%M")
+    objs = [obj for obj in ctx.obj['objs'] if is_due(obj)]
+    if limit is not None and len(objs) > limit:
+        click.echo(f"{len(objs)} tasks are due, only the first {limit} are shown here.  "
+                   "Consider postponing many at once with `plann interactive dismiss-panic`.")
+        objs = objs[:limit]
+    for obj in objs:
         _interactive_edit(obj)
 
 def _pinned_task_parents(event):

@@ -1,9 +1,11 @@
 ## Check https://click.palletsprojects.com/en/8.1.x/testing/
 
+import inspect
 from datetime import datetime, timedelta
 from unittest.mock import patch
 
 import caldav
+import pytest
 from caldav import Todo
 from click.testing import CliRunner
 
@@ -12,6 +14,32 @@ import plann.commands as commands_mod
 from plann.cli import _LazyCalendars, cli, delete, edit
 from plann.commands import _process_add_args, _process_set_args, _set_task_attribs, _sort_key_function, _todos_missing
 from tests.test_freebusy import FakeCalendar, _event, oslo
+
+
+@pytest.mark.parametrize("command, function", [
+    ('check-pinned', '_check_pinned'),
+    ('check-due', '_check_due'),
+    ('dismiss-panic', '_dismiss_panic'),
+    ('split-huge-tasks', '_split_huge_tasks'),
+    ('split-high-pri-tasks', '_split_high_pri_tasks'),
+])
+def test_interactive_cli_defaults_match_manage_tasks(command, function):
+    """`plann interactive X` and `manage-tasks` (which calls the
+    underlying function with its defaults) should behave the same"""
+    signature = inspect.signature(getattr(commands_mod, function))
+    calls = []
+    with patch.object(cli_mod, function, lambda *a: calls.append(signature.bind(*a).arguments)), \
+         patch.object(cli_mod, '_discover_calendars', lambda kwargs: []):
+        res = CliRunner().invoke(cli, ['interactive', command])
+    assert res.exit_code == 0, res.output
+    [args] = calls
+    for name, param in signature.parameters.items():
+        if param.default is not inspect.Parameter.empty:
+            assert args[name] == param.default, name
+
+
+def test_check_due_looks_24h_ahead():
+    assert inspect.signature(commands_mod._check_due).parameters['lookahead'].default == '24h'
 
 
 def _make_todo(uid, *, category=False, due=False, priority=False, dtstart=False):
@@ -35,6 +63,32 @@ def _make_todo(uid, *, category=False, due=False, priority=False, dtstart=False)
 class _FakeCtx:
     def __init__(self):
         self.obj = {'calendars': [], 'objs': []}
+
+
+def _check_due_with(todos, limit):
+    """run _check_due over the given todos, return the ones it asks about"""
+    def select(ctx, **kwargs):
+        assert 'limit' not in kwargs, "the limit should apply after the client side filtering"
+        ctx.obj['objs'] = list(todos)
+    asked = []
+    with patch.object(commands_mod, '_select', select), \
+         patch.object(commands_mod, '_interactive_edit', asked.append):
+        commands_mod._check_due(_FakeCtx(), limit=limit)
+    return asked
+
+
+def test_check_due_warns_when_tasks_are_left_out(capsys):
+    todos = [_make_todo(f"t{i}", due=True, dtstart=True) for i in range(5)]
+    assert _check_due_with(todos, limit=3) == todos[:3]
+    out = capsys.readouterr().out
+    assert '5 tasks are due' in out
+    assert 'dismiss-panic' in out
+
+
+def test_check_due_no_warning_within_limit(capsys):
+    todos = [_make_todo(f"t{i}", due=True, dtstart=True) for i in range(3)]
+    assert _check_due_with(todos, limit=3) == todos
+    assert capsys.readouterr().out == ''
 
 
 def test_todos_missing():

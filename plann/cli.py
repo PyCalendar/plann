@@ -18,6 +18,7 @@ plann is a "next generation" reimplementation of calendar-cli
 ## `from plann import ...`
 
 import datetime
+import inspect
 import logging
 import sys
 
@@ -67,6 +68,13 @@ from plann.lib import add_time_tracking as add_time_tracking_
 from plann.timespec import _now, parse_dt, tz
 
 list_type = list
+
+
+def _default(func, param):
+    """The default value of a parameter of func - lets a click option
+    share its default with the implementation, which `manage-tasks`
+    calls directly"""
+    return inspect.signature(func).parameters[param].default
 
 ## TODO:
 
@@ -598,7 +606,7 @@ def ical(ctx, ical_data, ical_file):
 @add.command()
 @click.argument('summary', nargs=-1)
 @_set_attr_options(verb='set')
-@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after) before the start of an event, or the DUE (else DTSTART) of a task")
+@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after; a number without a unit is minutes) before the start of an event, or the DUE (else DTSTART) of a task")
 @click.pass_context
 def todo(ctx, **kwargs):
     return _add_todo(ctx, **kwargs)
@@ -608,7 +616,7 @@ def todo(ctx, **kwargs):
 @click.argument('summary')
 @click.argument('timespec')
 @_set_attr_options(verb='set')
-@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after) before the start of an event, or the DUE (else DTSTART) of a task")
+@click.option('--set-alarm', help="remind at this time, or this long (like 10m, +10m for after; a number without a unit is minutes) before the start of an event, or the DUE (else DTSTART) of a task")
 @click.pass_context
 def event(ctx, timespec, **kwargs):
     """
@@ -708,8 +716,8 @@ def manage_tasks(ctx):
     _agenda(ctx)
 
 @interactive.command()
-@click.option('--limit', type=int, help='If more than limit overdue tasks are found, probably we should do a mass procrastination rather than going through one and one task')
-@click.option('--lookahead', help='Look-ahead time - check tasks that needs to be completed in the near future', default='+16h')
+@click.option('--limit', type=int, help='If more than limit overdue tasks are found, probably we should do a mass procrastination rather than going through one and one task', default=_default(_check_due, 'limit'))
+@click.option('--lookahead', help='Look-ahead time - check tasks that needs to be completed in the near future', default=_default(_check_due, 'lookahead'))
 @click.pass_context
 def check_due(ctx, limit, lookahead):
     """
@@ -718,7 +726,7 @@ def check_due(ctx, limit, lookahead):
     return _check_due(ctx, limit, lookahead)
 
 @interactive.command()
-@click.option('--lookback', help='how far back to look for events pinning tasks to the calendar', default='7d')
+@click.option('--lookback', help='how far back to look for events pinning tasks to the calendar', default=_default(_check_pinned, 'lookback'))
 @click.pass_context
 def check_pinned(ctx, lookback):
     """
@@ -731,9 +739,9 @@ def check_pinned(ctx, lookback):
 
 @interactive.command()
 @click.option('--hours-per-day', help='how many hours per day you expect to be able to dedicate to those tasks/events', default=4)
-@click.option('--lookahead', help='timespan to investigate', default='60d')
+@click.option('--lookahead', help='timespan to investigate', default=_default(_dismiss_panic, 'lookahead'))
 @click.pass_context
-def dismiss_panic(ctx, hours_per_day, lookahead='60d'):
+def dismiss_panic(ctx, hours_per_day, lookahead):
     """Checks workload, procrastinates tasks
 
     Search for panic points, checks if they can be solved by
@@ -743,9 +751,9 @@ def dismiss_panic(ctx, hours_per_day, lookahead='60d'):
 
 
 @interactive.command()
-@click.option('--threshold', help='tasks with a higher estimate than this should be split into subtasks', default='4h')
-@click.option('--max-lookahead', help='ignore tasks further in the future than this', default='30d')
-@click.option('--limit-lookahead', help='only consider the first x tasks', default=32)
+@click.option('--threshold', help='tasks with a higher estimate than this should be split into subtasks', default=_default(_split_huge_tasks, 'threshold'))
+@click.option('--max-lookahead', help='ignore tasks further in the future than this', default=_default(_split_huge_tasks, 'max_lookahead'))
+@click.option('--limit-lookahead', help='only consider the first x tasks', default=_default(_split_huge_tasks, 'limit_lookahead'))
 @click.pass_context
 def split_huge_tasks(ctx, threshold, max_lookahead, limit_lookahead):
     """
@@ -754,9 +762,9 @@ def split_huge_tasks(ctx, threshold, max_lookahead, limit_lookahead):
     return _split_huge_tasks(ctx, threshold, max_lookahead, limit_lookahead)
 
 @interactive.command()
-@click.option('--max-lookahead', help='ignore tasks further in the future than this', default='30d')
-@click.option('--threshold', help='tasks with this or lower priority should always have children', default=2)
-@click.option('--limit-lookahead', help='only consider the first x tasks', default=32)
+@click.option('--max-lookahead', help='ignore tasks further in the future than this', default=_default(_split_high_pri_tasks, 'max_lookahead'))
+@click.option('--threshold', help='tasks with this or lower priority should always have children', default=_default(_split_high_pri_tasks, 'threshold'))
+@click.option('--limit-lookahead', help='only consider the first x tasks', default=_default(_split_high_pri_tasks, 'limit_lookahead'))
 @click.pass_context
 def split_high_pri_tasks(ctx, threshold, max_lookahead, limit_lookahead):
     """Tasks with very high priority (1,2) indicates a hard DUE that
