@@ -109,3 +109,103 @@ def test_timeline_suggestion():
 
     timeline = panic_planning.timeline_suggestion(ctx, hours_per_day=23)
     #['x' for x in assert
+
+## The editable plan of interactive_fix_timeline: one line per task,
+## UID START DURATION SUMMARY.  The end is START+DURATION, so moving the
+## start keeps the length.
+
+def test_pin_plan_format():
+    from zoneinfo import ZoneInfo
+    oslo = ZoneInfo('Europe/Oslo')
+    utc = ZoneInfo('UTC')
+    entries = [
+        ## an existing event, stored in UTC
+        (None, datetime(2026, 11, 24, 8, 0, tzinfo=utc), datetime(2026, 11, 24, 9, 0, tzinfo=utc), 'Standup'),
+        ('uid-1', datetime(2026, 11, 24, 10, 0, tzinfo=oslo), datetime(2026, 11, 24, 11, 30, tzinfo=oslo), 'Write #1 report'),
+    ]
+    text = panic_planning.format_pin_plan(entries, oslo)
+    ## time zone named in the header
+    assert 'Europe/Oslo' in text
+    assert 'UTC+01:00' in text
+    ## all timestamps converted to the display zone, the end is not written out
+    assert '2026-11-24 09:00 +1h' in text
+    assert '2026-11-24 10:00 +1h30m' in text
+    assert '11:30' not in text
+    ## the existing event is a comment, the task is not
+    lines = text.split('\n')
+    assert [x for x in lines if 'Standup' in x][0].startswith('#')
+    assert [x for x in lines if 'Write' in x][0].startswith('uid-1 ')
+
+    ## Unchanged text parses back to the same plan, converted to the
+    ## display zone - and a '#' in a summary is not a comment
+    parsed = panic_planning.parse_pin_plan(text, oslo)
+    assert parsed == [('uid-1', entries[1][1], entries[1][2], 'Write #1 report')]
+
+    ## Moving the start moves the end
+    moved = text.replace('2026-11-24 10:00 +1h30m', '2026-11-24 13:15 +1h30m')
+    ((uid, begin, end, summary),) = panic_planning.parse_pin_plan(moved, oslo)
+    assert begin == datetime(2026, 11, 24, 13, 15, tzinfo=oslo)
+    assert end == datetime(2026, 11, 24, 14, 45, tzinfo=oslo)
+
+    ## Changing the duration resizes; no plus sign is fine too
+    resized = text.replace('+1h30m', '45m')
+    ((uid, begin, end, summary),) = panic_planning.parse_pin_plan(resized, oslo)
+    assert end - begin == timedelta(minutes=45)
+
+def test_pin_plan_dst_switch():
+    from zoneinfo import ZoneInfo
+    oslo = ZoneInfo('Europe/Oslo')
+    entries = [
+        ('a', datetime(2026, 10, 24, 10, 0, tzinfo=oslo), datetime(2026, 10, 24, 11, 0, tzinfo=oslo), 'before'),
+        ('b', datetime(2026, 10, 26, 10, 0, tzinfo=oslo), datetime(2026, 10, 26, 11, 0, tzinfo=oslo), 'after'),
+    ]
+    text = panic_planning.format_pin_plan(entries, oslo)
+    assert 'UTC+02:00' in text
+    assert 'UTC+01:00' in text
+    assert panic_planning.parse_pin_plan(text, oslo) == entries
+
+def test_pin_plan_entry_spanning_dst_switch():
+    """The duration is real elapsed time, so an unedited plan gives
+    back the same start and end, whatever zone the entry came in"""
+    from zoneinfo import ZoneInfo
+    oslo = ZoneInfo('Europe/Oslo')
+    utc = ZoneInfo('UTC')
+    ## three hours across the night the clocks go back
+    stored_utc = ('a', datetime(2026, 10, 24, 23, 30, tzinfo=utc), datetime(2026, 10, 25, 2, 30, tzinfo=utc), 'utc')
+    ## 00:30 to 03:30 Oslo wall clock is four hours
+    stored_oslo = ('b', datetime(2026, 10, 25, 0, 30, tzinfo=oslo), datetime(2026, 10, 25, 3, 30, tzinfo=oslo), 'oslo')
+    for (entry, shown) in ((stored_utc, '+3h '), (stored_oslo, '+4h ')):
+        text = panic_planning.format_pin_plan([entry], oslo)
+        assert shown in text
+        ((uid, begin, end, summary),) = panic_planning.parse_pin_plan(text, oslo)
+        assert (begin, end) == (entry[1], entry[2])
+
+def test_pin_plan_multiline_summary():
+    """A summary taken from a multi-line DESCRIPTION stays on its line"""
+    from zoneinfo import ZoneInfo
+    oslo = ZoneInfo('Europe/Oslo')
+    entries = [
+        (None, datetime(2026, 11, 24, 8, 0, tzinfo=oslo), datetime(2026, 11, 24, 9, 0, tzinfo=oslo), 'Standup\nwith the team'),
+        ('uid-1', datetime(2026, 11, 24, 10, 0, tzinfo=oslo), datetime(2026, 11, 24, 11, 0, tzinfo=oslo), 'Buy milk\r\nand bread\n'),
+    ]
+    text = panic_planning.format_pin_plan(entries, oslo)
+    assert panic_planning.parse_pin_plan(text, oslo) == [
+        ('uid-1', entries[1][1], entries[1][2], 'Buy milk and bread')]
+
+def test_pin_plan_says_how_to_cancel():
+    from zoneinfo import ZoneInfo
+    text = panic_planning.format_pin_plan([], ZoneInfo('Europe/Oslo'))
+    assert 'Delete all the task\n# lines to pin nothing' in text
+
+def test_pin_plan_parse_errors():
+    from zoneinfo import ZoneInfo
+
+    import pytest
+    oslo = ZoneInfo('Europe/Oslo')
+    for bad in ('uid-1 2026-11-24 10:00 - 11:30 summary',
+                'uid-1 tomorrow +1h summary',
+                'uid-1 2026-11-24 10:00 +0m summary',
+                'uid-1 2026-11-24 10:00 +1h'):
+        with pytest.raises(ValueError, match='line 2'):
+            panic_planning.parse_pin_plan('# comment\n' + bad, oslo)
+    assert panic_planning.parse_pin_plan('\n# only comments\n   \n', oslo) == []

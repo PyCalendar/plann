@@ -329,10 +329,29 @@ def _run_plann_tests(calendars):
     ## Testing interactive fix timeline, and checking that past events are ignored in the
     ## panic planning.
     ## We were busy with other things at the scheduled time.  Let's try to reschedule ...
-    with patch('plann.commands._editor', new=passthrough) as _editor:
+    ## A parse error reopens the editor with the error on top; then
+    ## we accept the plan and ask for a new one, which should have
+    ## nothing left to pin, so no third round is offered.
+    editor_texts = []
+    def editor(text):
+        editor_texts.append(text)
+        if len(editor_texts) == 1:
+            return text + "\nthis line is garbage\n"
+        return text.replace("this line is garbage", "")
+    def editor_(text):
+        assert len(editor_texts) < 5
+        return editor(text)
+    with patch("plann.commands._editor", new=editor_), \
+         patch('plann.commands.click.confirm', return_value=True) as _confirm:
         with patch('plann.panic_planning._now', new=lambda: datetime_(2010,12,9,23,33,33)) as _now:
             _select(ctx, todo=True)
             _check_for_panic(ctx, timeline_start='2010-10-10', timeline_end=datetime_(year=2011, month=11, day=11, hour=11, minute=11), hours_per_day=24, print_timeline=False, interactive_fix_timeline=True, include_all_events=True)
+    assert len(editor_texts) == 3
+    assert editor_texts[1].startswith('# ERROR: line ')
+    assert 'garbage' in editor_texts[1]
+    assert _confirm.call_count == 1
+    ## the second plan has the newly pinned tasks as existing events only
+    assert not [x for x in editor_texts[2].split('\n') if x and not x.startswith('#')]
     _select(ctx, event=True)
     assert len(ctx.obj['objs'])==4
 

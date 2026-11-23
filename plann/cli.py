@@ -511,7 +511,7 @@ def complete(ctx, **kwargs):
 @click.option('--include-all-events/--no-extra-events', help='Include all events (and selected tasks)')
 @click.option('--print-timeline/--no-print-timeline', help='Print a possible timeline')
 @click.option('--fix-timeline/--no-fix-timeline', help='Make events from the tasks and pin them to the calendar')
-@click.option('--interactive-fix-timeline/--no-interactive-fix-timeline', help='Make a suggested editable time table')
+@click.option('--interactive-fix-timeline/--no-interactive-fix-timeline', help='Edit the suggested timeline (start and duration per task) and pin the tasks to the calendar')
 @click.pass_context
 def check_for_panic(ctx, **kwargs):
     """Check if we need to panic

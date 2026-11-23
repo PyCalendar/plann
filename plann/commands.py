@@ -10,6 +10,7 @@ import caldav
 import click
 import icalendar
 from caldav.lib.error import ETagMismatchError, NotFoundError, PutError, ScheduleTagMismatchError
+from dateutil import tz as dateutil_tz
 from icalendar_searcher import Searcher
 
 from plann.interactive import (
@@ -22,7 +23,6 @@ from plann.interactive import (
     _mass_interactive_edit,
     _mass_reprioritize,
     _pdb_edit,
-    _strip_line,
     interactive_split_task,
 )
 from plann.lib import (
@@ -45,7 +45,7 @@ from plann.lib import (
     childlike,
     parentlike,
 )
-from plann.panic_planning import timeline_suggestion
+from plann.panic_planning import format_pin_plan, parse_pin_plan, timeline_suggestion
 from plann.template import Template
 from plann.timespec import DURATION_RE, _ensure_ts, _now, parse_add_dur, parse_dt, parse_timespec, tz
 
@@ -362,6 +362,39 @@ def _edit(ctx, cancel=None, interactive_ical=False, interactive_relations=False,
         ## OPTIMIZE TODO: only save objects that actually have been edited
         obj.save()
 
+def _display_timezone():
+    return tz.implicit_timezone or dateutil_tz.tzlocal()
+
+def _timeline_entries(possible_timeline, timeline_start):
+    """(uid, begin, end, summary) for the future items of the timeline,
+    uid is None for things that are already events"""
+    ret = []
+    for (foo, next) in zip(possible_timeline, possible_timeline[1:]):
+        if 'begin' in foo and 'obj' in foo and not isinstance(foo['obj'], str):
+            if _ensure_ts(foo['begin'])>timeline_start:
+                obj = foo['obj']
+                uid = str(obj.icalendar_component['UID']) if isinstance(obj, caldav.Todo) else None
+                ret.append((uid, foo['begin'], next['begin'], _summary(obj)))
+    return ret
+
+def _interactive_fix_timeline(ctx, possible_timeline, timeline_start):
+    """Lets the user edit the suggested plan and pins the tasks in it to
+    the calendar.  Returns the number of events added."""
+    tzinfo = _display_timezone()
+    text = format_pin_plan(_timeline_entries(possible_timeline, timeline_start), tzinfo)
+    while True:
+        text = _editor(text)
+        try:
+            plan = parse_pin_plan(text, tzinfo)
+            break
+        except ValueError as e:
+            text = "\n".join([f"# ERROR: {e}"] + [x for x in text.split("\n") if not x.startswith("# ERROR: ")])
+    for (uid, begin, end, summary) in plan:
+        event = _add_event(ctx, summary=summary, timespec=(begin, end), set_status='TENTATIVE', first_calendar=True, set_parent=[uid])
+        ## so a new plan won't suggest the task again
+        ctx.obj['objs'].append(event)
+    return len(plan)
+
 def _check_for_panic(ctx, hours_per_day, output=True, print_timeline=True, fix_timeline=False, interactive_fix_timeline=False, timeline_start=None, timeline_end=None, include_all_events=False):
     if not timeline_start:
         timeline_start = _now()
@@ -384,10 +417,11 @@ def _check_for_panic(ctx, hours_per_day, output=True, print_timeline=True, fix_t
         return _summary(obj)
 
     if (print_timeline):
+        tzinfo = _display_timezone()
         click.echo("Calculated timeline suggestion:")
         for foo in possible_timeline:
             if 'begin' in foo:
-                click.echo(f"{foo['begin']:%FT%H:%M %Z} {summary(foo.get('obj'))}")
+                click.echo(f"{foo['begin'].astimezone(tzinfo):%FT%H:%M %Z} {summary(foo.get('obj'))}")
 
     if output:
         click.echo()
@@ -395,43 +429,18 @@ def _check_for_panic(ctx, hours_per_day, output=True, print_timeline=True, fix_t
         for foo in possible_timeline:
             if 'begin' in foo and 'obj' in foo and not isinstance(foo['obj'], str):
                 if _ensure_ts(foo['begin'])<timeline_start:
-                    click.echo(f"{foo['obj'].get_due():%FT%H%M %Z} {foo['obj'].icalendar_component.get('PRIORITY', 0)} {_summary(foo['obj'])}")
+                    due = _ensure_ts(foo['obj'].get_due()).astimezone(_display_timezone())
+                    click.echo(f"{due:%FT%H%M %Z} {foo['obj'].icalendar_component.get('PRIORITY', 0)} {_summary(foo['obj'])}")
 
-    if fix_timeline or interactive_fix_timeline:
-        output = [] ## for interactive
-        for i in range(len(possible_timeline)-1):
-            foo = possible_timeline[i]
-            next = possible_timeline[i+1]
-            if 'begin' in foo and 'obj' in foo and not isinstance(foo['obj'], str):
-                if _ensure_ts(foo['begin'])>timeline_start:
-                    obj = foo['obj']
-                    if isinstance(obj, caldav.Todo):
-                        comp = obj.icalendar_component
-                        if fix_timeline:
-                            ## TODO: copy other attributes?
-                            _add_event(ctx, summary=_summary(obj), timespec=(foo['begin'], next['begin']), set_status='TENTATIVE', first_calendar=True, set_parent=[comp['UID']])
-                        elif interactive_fix_timeline:
-                            output.append(f"{comp['UID']:37} {foo['begin']} - {next['begin']}: {_summary(obj)}")
-                    elif interactive_fix_timeline:
-                        output.append(f"{' '*37} {foo['begin']} - {next['begin']}: {_summary(obj)}")
+    if fix_timeline:
+        for (uid, begin, end, summary) in _timeline_entries(possible_timeline, timeline_start):
+            if uid:
+                ## TODO: copy other attributes?
+                _add_event(ctx, summary=summary, timespec=(begin, end), set_status='TENTATIVE', first_calendar=True, set_parent=[uid])
     if interactive_fix_timeline:
-        pinned_re = re.compile("^(.+?) +(.+?) - (.+?): (.+)$")
-        fixed_timeline = _editor("""\
-# Lines not starting with UID are already events and cannot be changed as for now
-# Delete things you don't want on the calendar
-# You may also change the suggested times and even the summary
-# There are no collision control if you change the suggested times
-""" + "\n".join(output))
-        for line in fixed_timeline.split('\n'):
-            if line.startswith(' '*16):
-                continue
-            line = _strip_line(line)
-            if not line:
-                continue
-            parsed = pinned_re.match(line)
-            assert parsed ## TODO: print a friendly error message and probably even continue execution
-            (uid, begin, end, summary) = parsed.groups()
-            _add_event(ctx, summary=summary, timespec=f"{begin} {end}", set_status='TENTATIVE', first_calendar=True, set_parent=[uid])
+        while (_interactive_fix_timeline(ctx, possible_timeline, timeline_start) and
+               click.confirm("Plan again, with the events just added?", default=False)):
+            possible_timeline = timeline_suggestion(ctx, hours_per_day=hours_per_day, timeline_end=timeline_end)
 
     return possible_timeline
 
