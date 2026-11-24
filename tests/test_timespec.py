@@ -291,3 +291,85 @@ def test_ensure_ts():
     assert(_ensure_ts(now) == implicitnow)
     assert(_ensure_ts(utcnow) == utcnow)
     assert(_ensure_ts(implicitnow) == implicitnow)
+
+
+class TestTzinfoFromDateparser:
+    """dateparser hands out pytz zones and its own pytz look-alike
+    ``StaticTzInfo``; icalendar and recurring_ical_events only support
+    zoneinfo (and pytz as legacy), so parse_dt must only return stdlib
+    tzinfo objects - see
+    https://github.com/niccokunzmann/python-recurring-ical-events/issues/311"""
+
+    @staticmethod
+    def _assert_stdlib_tz(dt):
+        assert isinstance(dt.tzinfo, (ZoneInfo, timezone)), type(dt.tzinfo)
+
+    @pytest.mark.parametrize("input,offset", [
+        ("2026-11-21T05:00+01:00", timedelta(hours=1)),
+        ("2026-11-21T05:00-05:00", timedelta(hours=-5)),
+        ("2026-11-21T05:00+05:30", timedelta(hours=5, minutes=30)),
+        ("2026-11-21 05:00 Z", timedelta(0)),
+        ("2026-11-21 05:00 EST", timedelta(hours=-5)),
+    ])
+    def test_explicit_offset(self, input, offset):
+        result = parse_dt(input)
+        self._assert_stdlib_tz(result)
+        assert result.utcoffset() == offset
+        assert result.replace(tzinfo=None) == datetime(2026, 11, 21, 5, 0)
+
+    @pytest.mark.parametrize("input,offset", [
+        ("2026-07-01 14:00", timedelta(hours=2)),
+        ("2026-12-01 14:00", timedelta(hours=1)),
+    ])
+    def test_implicit_timezone(self, input, offset):
+        """With a configured timezone dateparser returns a pytz zone;
+        the converted value keeps both the wall clock and the offset"""
+        tz.implicit_timezone = "Europe/Oslo"
+        result = parse_dt(input)
+        assert result.tzinfo == OSLO
+        assert result.utcoffset() == offset
+        assert result.hour == 14
+
+    @pytest.mark.parametrize("zone,input,expected", [
+        ## the clocks go forward at midnight there: a date stays a date
+        ("America/Santiago", "2026-09-06", date(2026, 9, 6)),
+        ("America/Havana", "2026-03-08", date(2026, 3, 8)),
+    ])
+    def test_date_in_midnight_dst_gap(self, zone, input, expected):
+        tz.implicit_timezone = zone
+        assert parse_dt(input) == expected
+
+    @pytest.mark.parametrize("input,offset", [
+        ("2026-03-29 02:30", timedelta(hours=1)),   # in the spring-forward gap
+        ("2026-10-25 02:30", timedelta(hours=1)),   # ambiguous; dateparser takes standard time
+    ])
+    def test_dst_transition_keeps_wall_clock(self, input, offset):
+        """The time typed is the time shown, with the offset dateparser chose"""
+        tz.implicit_timezone = "Europe/Oslo"
+        result = parse_dt(input)
+        assert result.tzinfo == OSLO
+        assert (result.hour, result.minute) == (2, 30)
+        assert result.utcoffset() == offset
+
+    def test_natural_language_with_implicit_timezone(self):
+        tz.implicit_timezone = "Europe/Oslo"
+        self._assert_stdlib_tz(parse_dt("tomorrow 14:00"))
+
+    def test_timespec(self):
+        tz.implicit_timezone = "Europe/Oslo"
+        for ts in parse_timespec("2026-11-21T05:00+01:00 2026-11-21T07:00+01:00"):
+            self._assert_stdlib_tz(ts)
+
+    def test_recurring_ical_events_between(self):
+        """The crash reported upstream: between() on a recurring event
+        with a parsed explicit-offset timestamp"""
+        import icalendar
+        import recurring_ical_events
+        cal = icalendar.Calendar.from_ical(
+            "BEGIN:VCALENDAR\r\nVERSION:2.0\r\nPRODID:test\r\n"
+            "BEGIN:VEVENT\r\nUID:daily@example.com\r\n"
+            "DTSTART:20261101T050000Z\r\nDURATION:PT1H\r\nRRULE:FREQ=DAILY\r\n"
+            "END:VEVENT\r\nEND:VCALENDAR\r\n")
+        start = parse_dt("2026-11-21T05:00+01:00")
+        end = parse_dt("2026-11-21T07:00+01:00")
+        assert len(recurring_ical_events.of(cal).between(start, end)) == 1

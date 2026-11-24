@@ -89,6 +89,31 @@ def _ensure_ts(dt):
             return dt
     return datetime.datetime(dt.year, dt.month, dt.day, tzinfo=tz.implicit_timezone).astimezone(tz.implicit_timezone)
 
+def _stdlib_tz(dt):
+    """Swap the tzinfo dateparser returns - a pytz zone, or its own
+    pytz look-alike StaticTzInfo for an explicit offset - for a
+    zoneinfo zone or a fixed offset.  icalendar and recurring_ical_events
+    only support zoneinfo (and legacy pytz).
+
+    The wall clock is kept, not the instant: pytz puts a time in a DST
+    gap at an instant that reads an hour later in zoneinfo, which would
+    turn a date-only input into a 01:00 timestamp where the clocks go
+    forward at midnight.  An ambiguous time keeps the offset pytz chose."""
+    tzinfo = dt.tzinfo
+    if tzinfo is None or isinstance(tzinfo, (zoneinfo.ZoneInfo, datetime.timezone)):
+        return dt
+    zone = getattr(tzinfo, 'zone', None)
+    if zone:
+        try:
+            ret = dt.replace(tzinfo=zoneinfo.ZoneInfo(zone))
+        except (zoneinfo.ZoneInfoNotFoundError, ValueError):
+            pass
+        else:
+            if ret.utcoffset() != dt.utcoffset() and ret.replace(fold=1).utcoffset() == dt.utcoffset():
+                ret = ret.replace(fold=1)
+            return ret
+    return dt.replace(tzinfo=datetime.timezone(dt.utcoffset()))
+
 def parse_dt(input, return_type=None, for_storage=False):
     """
     Convenience-method, it is very liberal in what it accepts as input:
@@ -136,6 +161,7 @@ def _parse_dt(input, return_type=None):
         ret = dateparser.parse(input, settings=settings)
         if ret is None:
             raise ValueError(f"Could not parse datetime string: {input!r}")
+        ret = _stdlib_tz(ret)
     if return_type is datetime.datetime:
         return _ensure_ts(ret)
     elif return_type is datetime.date:
