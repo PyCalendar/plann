@@ -102,6 +102,9 @@ known-first-party = ["plann"]
 testpaths = ["tests"]
 python_files = ["test_*.py"]
 filterwarnings = ["error"]
+# No async tests here; a pytest-asyncio installed system-wide would
+# otherwise fail the run with a deprecation warning made fatal above.
+addopts = "-p no:asyncio"
 
 [tool.coverage.run]
 source = ["plann"]

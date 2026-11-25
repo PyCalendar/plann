@@ -395,3 +395,16 @@ The panic planning will try to figure out if it's still possible to perform all 
 
 TODO: write more about the panic planning algorithm.
 
+#### Pinning tasks to the calendar
+
+`plann select --todo check-for-panic --include-all-events --interactive-fix-timeline` (also run by `interactive manage-tasks`, for the next five days) opens the suggested timeline in an editor, one line per task:
+
+```
+# All times are in Europe/Oslo (CET = UTC+01:00).
+...
+2b5c0e1e-...                         2026-11-24 10:00 +1h30m  Write the report
+#                                    2026-11-24 12:00 +1h     Lunch
+```
+
+The columns are UID, start, duration and summary.  There is no end time, so changing the start moves the task and keeps its length; change the duration to make it shorter or longer.  Delete a line to leave a task off the calendar.  Lines starting with `#` are existing events, shown for reference.  All times are in one timezone, the one named at the top of the file (the `--implicit-timezone`, or else the local one).  Each remaining line becomes a tentative event, a child of the task.  A line that can't be parsed reopens the editor with the error at the top; delete all the task lines to get out without pinning anything.  Afterwards you may plan again: the tasks just pinned are left out of the new suggestion.
+

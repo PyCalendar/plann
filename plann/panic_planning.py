@@ -1,8 +1,10 @@
-from datetime import datetime, timedelta
+import re
+from datetime import datetime, timedelta, timezone
 
 from sortedcontainers import SortedKeyList
 
 from plann.lib import _component_type, _ensure_ts, _now
+from plann.timespec import parse_add_dur
 
 
 class TimeLine(SortedKeyList):
@@ -148,3 +150,86 @@ def timeline_suggestion(ctx, hours_per_day=4, timeline_end=None):
             timeline.pad_slack(begin, -slackbalance)
             slackbalance=timedelta(0)
     return timeline
+
+
+## The editable plan used by check-for-panic --interactive-fix-timeline.
+## One line per task: UID START DURATION SUMMARY.  The end is deliberately
+## not written out, so moving the start keeps the length of the block.
+
+PIN_PLAN_TS_FORMAT = '%Y-%m-%d %H:%M'
+_pin_plan_re = re.compile(r'^(\S+)\s+(\d{4}-\d{2}-\d{2} \d{1,2}:\d{2})\s+(\+?[0-9.smhdwy]+)\s+(\S.*?)\s*$')
+
+def format_duration(duration):
+    """timedelta to the duration syntax parse_add_dur reads, like +1h30m"""
+    secs = int(duration.total_seconds())
+    ret = ''
+    for unit, size in (('d', 86400), ('h', 3600), ('m', 60), ('s', 1)):
+        if secs >= size:
+            ret += f"{secs // size}{unit}"
+            secs %= size
+    return '+' + (ret or '0m')
+
+def _utc_offset(ts):
+    off = ts.strftime('%z')
+    return f"UTC{off[:3]}:{off[3:]}"
+
+def format_pin_plan(entries, tzinfo):
+    """entries are (uid, begin, end, summary) tuples, uid None for
+    existing events.  All timestamps are shown in tzinfo."""
+    zone = getattr(tzinfo, 'key', None) or 'local time'
+    offsets = []
+    for (uid, begin, end, summary) in entries:
+        ts = begin.astimezone(tzinfo)
+        label = f"{ts:%Z} = {_utc_offset(ts)}"
+        if label not in offsets:
+            offsets.append(label)
+    if len(offsets) > 1:
+        offset_note = f" ({', '.join(offsets)}; the offset changes within this plan)"
+    elif offsets:
+        offset_note = f" ({offsets[0]})"
+    else:
+        offset_note = ''
+    lines = [
+        f"# All times are in {zone}{offset_note}.",
+        "#",
+        "# Each line is:  UID  START  DURATION  SUMMARY",
+        "# There is no end time: the end is START + DURATION.  Change START to move",
+        "# a task, it keeps its length.  Change DURATION (like +45m, +2h, +1h30m)",
+        "# to make it shorter or longer.  The summary may be edited too.",
+        "# Delete a line to leave that task off the calendar.  Delete all the task",
+        "# lines to pin nothing - also the way out after an error.",
+        "# Lines starting with '#' are existing events, they can't be changed here.",
+        "# There is no collision check.",
+        "",
+    ]
+    width = max([len(x[0]) for x in entries if x[0]] + [36])
+    for (uid, begin, end, summary) in entries:
+        prefix = uid.ljust(width) if uid else '#'.ljust(width)
+        ## real elapsed time, as parse_pin_plan adds it back
+        duration = end.astimezone(timezone.utc) - begin.astimezone(timezone.utc)
+        summary = re.sub(r'\s*[\r\n]+\s*', ' ', str(summary)).strip()
+        lines.append(f"{prefix} {begin.astimezone(tzinfo):{PIN_PLAN_TS_FORMAT}} {format_duration(duration):7} {summary}")
+    return "\n".join(lines) + "\n"
+
+def parse_pin_plan(text, tzinfo):
+    """Inverse of format_pin_plan.  Returns a list of (uid, begin, end,
+    summary), raises ValueError naming the line on syntax errors."""
+    ret = []
+    for (lineno, line) in enumerate(text.split('\n'), start=1):
+        line = line.strip()
+        if not line or line.startswith('#'):
+            continue
+        parsed = _pin_plan_re.match(line)
+        if not parsed:
+            raise ValueError(f"line {lineno}: expected UID  YYYY-MM-DD HH:MM  DURATION  SUMMARY, got: {line}")
+        (uid, begin, duration, summary) = parsed.groups()
+        try:
+            begin = datetime.strptime(begin, PIN_PLAN_TS_FORMAT).replace(tzinfo=tzinfo)
+            duration = parse_add_dur(None, duration)
+        except ValueError as e:
+            raise ValueError(f"line {lineno}: {e}: {line}") from e
+        if not duration or duration <= timedelta(0):
+            raise ValueError(f"line {lineno}: the duration must be positive: {line}")
+        end = (begin.astimezone(timezone.utc) + duration).astimezone(tzinfo)
+        ret.append((uid, begin, end, summary))
+    return ret
