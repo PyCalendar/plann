@@ -230,6 +230,98 @@ def test_sort_key_function_compiles_template_once():
     assert [str(o.icalendar_component['UID']) for o in objs] == ['b', 'c', 'a', 'e', 'd']
 
 
+_TODO_DUE = """BEGIN:VCALENDAR
+VERSION:2.0
+PRODID:-//Example Corp.//CalDAV Client//EN
+BEGIN:VTODO
+UID:{uid}
+DTSTAMP:19970901T130000Z
+SUMMARY:task {uid}
+{due}END:VTODO
+END:VCALENDAR"""
+
+
+def _todo_due(uid, due):
+    obj = Todo()
+    obj.data = _TODO_DUE.format(uid=uid, due=f"{due}\n" if due else "")
+    return obj
+
+
+def _due_mix():
+    """A UTC timestamp, a date, a floating timestamp, a timestamp in a
+    named timezone and a task without DUE (issue #65)."""
+    return [
+        _todo_due('none', None),
+        _todo_due('ts', 'DUE:20261203T100000Z'),
+        _todo_due('date', 'DUE;VALUE=DATE:20261202'),
+        _todo_due('floating', 'DUE:20261204T090000'),
+        _todo_due('oslo', 'DUE;TZID=Europe/Oslo:20261130T120000'),
+    ]
+
+
+def test_sort_key_function_date_properties():
+    """`--sort-key DUE` sorted on raw vDDDTypes, which crashed with
+    TypeError; dates, timestamps and missing values mixed must sort, with
+    the missing ones last (issue #65)."""
+    reverse, fkey = _sort_key_function('DUE')
+    objs = _due_mix()
+    objs.sort(key=fkey, reverse=reverse)
+    assert [str(o.icalendar_component['UID']) for o in objs] == ['oslo', 'date', 'ts', 'floating', 'none']
+
+
+def test_sort_key_function_date_properties_reverse():
+    """A reversed date sort still puts the items without the property last."""
+    reverse, fkey = _sort_key_function('-DUE')
+    objs = _due_mix()
+    objs.sort(key=fkey, reverse=reverse)
+    assert [str(o.icalendar_component['UID']) for o in objs] == ['floating', 'ts', 'date', 'oslo', 'none']
+
+
+def test_sort_key_function_missing_property():
+    """A plain property missing on some items sorts them last instead of
+    comparing None with the values."""
+    objs = [_todo('a', 3), _todo_due('none', None), _todo('b', 1)]
+    reverse, fkey = _sort_key_function('PRIORITY')
+    objs.sort(key=fkey, reverse=reverse)
+    assert [str(o.icalendar_component['UID']) for o in objs] == ['b', 'a', 'none']
+
+
+def test_sort_key_function_due_from_duration():
+    """A task with DTSTART and DURATION but no DUE line is due at
+    DTSTART + DURATION (RFC 5545), and sorts there with `--sort-key DUE`."""
+    objs = [
+        _todo_due('late', 'DUE:20261203T100000Z'),
+        _todo_due('computed', 'DTSTART:20261202T100000Z\nDURATION:PT1H'),
+        _todo_due('early', 'DUE:20261201T100000Z'),
+    ]
+    reverse, fkey = _sort_key_function('DUE')
+    objs.sort(key=fkey, reverse=reverse)
+    assert [str(o.icalendar_component['UID']) for o in objs] == ['early', 'computed', 'late']
+
+
+def test_sort_key_function_mixed_date_types():
+    """A task with a date DTSTART and a timestamp DUE makes the icalendar
+    helpers raise InvalidCalendar; it must still sort on its DUE."""
+    objs = [
+        _todo_due('late', 'DUE:20261205T100000Z'),
+        _todo_due('mixed', 'DTSTART;VALUE=DATE:20261201\nDUE:20261203T100000Z'),
+        _todo_due('early', 'DUE:20261201T100000Z'),
+    ]
+    for skey, expected in (('DUE', ['early', 'mixed', 'late']), ('DTSTART', ['mixed', 'early', 'late'])):
+        reverse, fkey = _sort_key_function(skey)
+        objs.sort(key=fkey, reverse=reverse)
+        assert [str(o.icalendar_component['UID']) for o in objs] == expected
+
+
+def test_sort_key_function_duration_property():
+    """A DURATION sorts as a timedelta, also on a task without DTSTART,
+    where the icalendar helper gives up and the raw property is used."""
+    objs = [_todo_due('long', 'DURATION:PT2H'), _todo_due('short', 'DURATION:PT30M')]
+    reverse, fkey = _sort_key_function('DURATION')
+    objs.sort(key=fkey, reverse=reverse)
+    assert [str(o.icalendar_component['UID']) for o in objs] == ['short', 'long']
+
+
 def test_configure_command_registered():
     """The interactive configuration is wired into the click CLI as
     `plann configure` (code review C8 re-wiring)."""

@@ -81,7 +81,12 @@ def _sort_key_function(skey):
     A leading ``-`` reverses the sort.  A spec containing ``{`` is treated as
     a template and compiled once here - not rebuilt on every comparison during
     the sort (code review E2).  ``get_duration()`` is special-cased; any other
-    spec is a plain icalendar component property name.
+    spec is a plain icalendar component property name; its dates and
+    timestamps are compared as timezone-aware timestamps (a date is
+    midnight, a floating time is in the implicit timezone), and items
+    without the property come last, also in a reversed sort (issue #65).
+    DTSTART, DUE, DTEND and DURATION are taken from the icalendar helper
+    properties, so a missing one is computed from the others if it can be.
     """
     reverse = skey.startswith('-')
     if reverse:
@@ -95,8 +100,37 @@ def _sort_key_function(skey):
             return obj.get_duration()
     else:
         def fkey(obj):
-            return obj.icalendar_component.get(skey)
+            value = _sort_value(obj.icalendar_component, skey)
+            if value is None:
+                ## sorts after every present value, whichever the direction
+                return (not reverse, 0)
+            if isinstance(value, datetime.date):
+                value = _ensure_ts(value)
+            return (reverse, value)
     return reverse, fkey
+
+## (component name, property) -> the icalendar helper property computing it,
+## e.g. the DUE of a task with DTSTART and DURATION but no DUE line
+_SORT_HELPERS = {
+    ('VTODO', 'DTSTART'): 'start',
+    ('VTODO', 'DUE'): 'end',
+    ('VTODO', 'DURATION'): 'duration',
+    ('VEVENT', 'DTSTART'): 'start',
+    ('VEVENT', 'DTEND'): 'end',
+    ('VEVENT', 'DURATION'): 'duration',
+}
+
+def _sort_value(comp, skey):
+    """The decoded value of property ``skey`` of ``comp`` to sort on, or
+    None if it has none."""
+    helper = _SORT_HELPERS.get((comp.name, skey.upper()))
+    if helper:
+        try:
+            return getattr(comp, helper)
+        except (icalendar.IncompleteComponent, icalendar.InvalidCalendar):
+            pass
+    value = comp.get(skey)
+    return getattr(value, 'dt', value)
 
 def __select(ctx, extend_objects=False, all=None, uid=[], abort_on_missing_uid=None, warn_on_missing_uid=True, sort_key=[], skip_parents=None, skip_children=None, limit=None, offset=None, freebusyhack=None, pinned_tasks=None, **kwargs_):
     """
