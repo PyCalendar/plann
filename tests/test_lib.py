@@ -21,6 +21,7 @@ from plann.lib import (
     add_time_tracking,
     add_time_tracking_timew,
 )
+from plann.timespec import _ensure_ts
 
 utc=timezone.utc
 todo = """BEGIN:VCALENDAR
@@ -988,3 +989,90 @@ def test_list_json_one_vtimezone_per_tzid():
         _list([_event_in_oslo('a'), _event_in_oslo('b')], as_json=True)
     names = [comp[0] for comp in json.loads(echo.call_args.args[0])[2]]
     assert names == ['vtimezone', 'vevent', 'vevent']
+
+def _todo_with(dtstart_line, end_line):
+    t = Todo()
+    t.data = ("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:x\nBEGIN:VTODO\nUID:a\nDTSTAMP:20261101T000000Z\n"
+              f"SUMMARY:x\n{dtstart_line}\n{end_line}\nEND:VTODO\nEND:VCALENDAR\n")
+    return t
+
+@pytest.mark.parametrize("dtstart_line,end_line,hours", [
+    ## date-valued DTSTART on the same day as a timestamp DUE
+    ("DTSTART;VALUE=DATE:20261101", "DUE:20261101T120000Z", 12),
+    ("DTSTART;VALUE=DATE:20261101", "DUE:20261102T120000Z", 36),
+    ## DTSTART == DUE
+    ("DTSTART:20261101T120000Z", "DUE:20261101T120000Z", 0),
+    ("DTSTART:20261101T100000Z", "DUE:20261101T120000Z", 2),
+    ## the date next to a named timezone, or a floating timestamp
+    ("DTSTART;VALUE=DATE:20261101", "DUE;TZID=Europe/Oslo:20261101T120000", 12),
+    ("DTSTART;VALUE=DATE:20261101", "DUE:20261101T120000", 12),
+])
+def test_procrastinate_moves_dtstart(dtstart_line, end_line, hours, monkeypatch):
+    ## a date next to a UTC timestamp becomes midnight in the implicit
+    ## timezone: make that UTC, so the hours above hold everywhere
+    from zoneinfo import ZoneInfo
+
+    from plann import timespec
+    monkeypatch.setitem(vars(timespec.tz), "_implicit_timezone", ZoneInfo("UTC"))
+    _check_moves_dtstart(dtstart_line, end_line, hours, '14d')
+
+def test_procrastinate_zero_duration_to_absolute_date():
+    """a naive postpone target must not leave DTSTART floating next to a UTC DUE"""
+    t = _todo_with("DTSTART:20261101T120000Z", "DUE:20261101T120000Z")
+    with patch.object(t, 'save'):
+        _procrastinate([t], '2027-01-05')
+    comp = t.icalendar_component
+    assert comp['DTSTART'].dt == comp['DUE'].dt
+    assert t.get_duration() == timedelta(0)
+
+def test_procrastinate_zero_duration_property():
+    """DTSTART with DURATION:PT0S (no DUE) moves too, keeping the zero duration"""
+    t = _todo_with("DTSTART:20261101T120000Z", "DURATION:PT0S")
+    with patch.object(t, 'save'):
+        _procrastinate([t], '14d')
+    assert t.get_duration() == timedelta(0)
+    assert _ensure_ts(t.icalendar_component['DTSTART'].dt) > datetime.now(timezone.utc)
+
+def test_procrastinate_dtstart_only_left_alone():
+    t = _todo_with("DTSTART:20261101T120000Z", "SUMMARY:y")
+    with patch.object(t, 'save'):
+        _procrastinate([t], '14d')
+    assert t.icalendar_component['DTSTART'].dt == datetime(2026, 11, 1, 12, tzinfo=timezone.utc)
+
+def _check_moves_dtstart(dtstart_line, end_line, hours, delay):
+    """DTSTART moves along with DUE, keeping the duration (which is
+    used as a time estimate), also when the duration is zero or the
+    DTSTART is a date and the DUE a timestamp"""
+    t = _todo_with(dtstart_line, end_line)
+    with patch.object(t, 'save'):
+        _procrastinate([t], delay)
+    comp = t.icalendar_component
+    assert comp['DUE'].dt - comp['DTSTART'].dt == timedelta(hours=hours)
+    assert _ensure_ts(comp['DTSTART'].dt) > datetime.now(timezone.utc)
+
+def test_procrastinate_never_leaves_dtstart_after_due(monkeypatch):
+    """West of UTC, a date next to an early-morning UTC DUE becomes a local
+    midnight after the DUE; the postponed task must not keep DTSTART after
+    DUE, but get DTSTART at the DUE, like a zero duration"""
+    from zoneinfo import ZoneInfo
+
+    from plann import timespec
+    monkeypatch.setitem(vars(timespec.tz), "_implicit_timezone", ZoneInfo("America/New_York"))
+    t = _todo_with("DTSTART;VALUE=DATE:20261101", "DUE:20261101T020000Z")
+    with patch.object(t, 'save'):
+        _procrastinate([t], '14d')
+    comp = t.icalendar_component
+    assert comp['DTSTART'].dt == comp['DUE'].dt
+
+def test_fix_mismatched_date_types_on_event_with_dtend():
+    """An event has DTEND rather than DUE"""
+    from caldav import Event
+
+    from plann.lib import _fix_mismatched_date_types
+    e = Event(data=("BEGIN:VCALENDAR\nVERSION:2.0\nPRODID:x\nBEGIN:VEVENT\nUID:e\n"
+                    "DTSTAMP:20261101T000000Z\nDTSTART;VALUE=DATE:20261101\n"
+                    "DTEND;TZID=Europe/Oslo:20261101T120000\nEND:VEVENT\nEND:VCALENDAR\n"))
+    comp = e.icalendar_component
+    _fix_mismatched_date_types(comp)
+    assert b'DTSTART;TZID=Europe/Oslo:20261101T000000' in comp.to_ical()
+    assert 'DUE' not in comp
